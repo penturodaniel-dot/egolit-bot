@@ -9,4 +9,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Код проекту
 COPY . .
 
+# PYTHONPATH щоб всі модулі (config, db, ai) знаходились відносно /app
+ENV PYTHONPATH=/app
+
 CMD ["python", "bot/main.py"]
