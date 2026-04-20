@@ -78,31 +78,12 @@ async def lead_got_details(message: Message, state: FSMContext):
     user = message.from_user
     tg_username = f"@{user.username}" if user.username else f"id:{user.id}"
 
-    # Зберігаємо ліда в БД
+    # Зберігаємо ліда в bot_leads
     pool = await get_pool()
     await pool.execute("""
-        INSERT INTO telegram_users (chat_id, phone)
-        VALUES ($1, $2)
-        ON CONFLICT DO NOTHING
-    """, str(user.id), lead_phone)
-
-    # Повідомлення менеджеру
-    manager_text = (
-        f"🔔 <b>Нова заявка з бота!</b>\n\n"
-        f"👤 Ім'я: {lead_name}\n"
-        f"📞 Контакт: {lead_phone}\n"
-        f"💬 Telegram: {tg_username}\n"
-        f"📝 Деталі: {lead_details}\n"
-        f"🕐 Chat ID: {user.id}"
-    )
-
-    # Надсилаємо менеджеру якщо є chat_id
-    if MANAGER_CHAT_ID:
-        try:
-            from bot.main import bot as tg_bot
-            await tg_bot.send_message(MANAGER_CHAT_ID, manager_text, parse_mode="HTML")
-        except Exception:
-            pass
+        INSERT INTO bot_leads (name, phone, telegram_id, username, details, status)
+        VALUES ($1, $2, $3, $4, $5, 'new')
+    """, lead_name, lead_phone, str(user.id), tg_username, lead_details)
 
     await state.clear()
     await message.answer(

@@ -12,4 +12,7 @@ COPY . .
 # PYTHONPATH щоб всі модулі (config, db, ai) знаходились відносно /app
 ENV PYTHONPATH=/app
 
-CMD ["python", "bot/main.py"]
+RUN chmod +x start.sh
+
+# Запускаємо бота + адмінку разом
+CMD ["sh", "start.sh"]
