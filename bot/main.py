@@ -8,6 +8,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import settings
 from db.connection import get_pool, close_pool
+from db.categories_cache import load_categories
 from bot.handlers import start, search, lead
 
 logging.basicConfig(
@@ -29,6 +30,8 @@ async def on_startup():
     logger.info("Connecting to database...")
     await get_pool()
     logger.info("Database connected.")
+    await load_categories()
+    logger.info("Categories loaded.")
     me = await bot.get_me()
     logger.info(f"Bot started: @{me.username}")
 

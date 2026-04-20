@@ -39,15 +39,15 @@ def _media_url(media_id: int, file_name: str) -> str:
 
 
 async def search_products(
-    category_keywords: list[str] | None = None,
+    category_ids: list[int] | None = None,
     city_id: int | None = None,
     max_price: int | None = None,
     limit: int = 5,
+    offset: int = 0,
 ) -> list[ProductResult]:
     pool = await get_pool()
     city_id = city_id or settings.DEFAULT_CITY_ID
 
-    # Строим условия
     where_parts = [
         "p.state = 'PUBLISHED'",
         "p.deleted_at IS NULL",
@@ -61,13 +61,11 @@ async def search_products(
         params.append(max_price)
         idx += 1
 
-    if category_keywords:
-        kw_conditions = []
-        for kw in category_keywords:
-            kw_conditions.append(f"(LOWER(c.title) LIKE ${idx} OR LOWER(p.name) LIKE ${idx} OR LOWER(p.description) LIKE ${idx})")
-            params.append(f"%{kw.lower()}%")
-            idx += 1
-        where_parts.append(f"({' OR '.join(kw_conditions)})")
+    # Точний пошук по category_id замість LIKE
+    if category_ids:
+        where_parts.append(f"p.category_id = ANY(${idx})")
+        params.append(category_ids)
+        idx += 1
 
     where_sql = " AND ".join(where_parts)
 
@@ -90,9 +88,9 @@ async def search_products(
         ) m ON true
         WHERE {where_sql}
         ORDER BY p.is_top DESC, p.is_recommended DESC, p.id DESC
-        LIMIT ${idx}
+        LIMIT ${idx} OFFSET ${idx+1}
     """
-    params.append(limit)
+    params.extend([limit, offset])
 
     rows = await pool.fetch(query, *params)
 
@@ -157,17 +155,3 @@ async def search_events(
             photo_url=None,
         ))
     return results
-
-
-async def get_categories_list() -> list[dict]:
-    pool = await get_pool()
-    query = """
-        SELECT id, title, parent_id, active_products_counter
-        FROM categories
-        WHERE deleted_at IS NULL AND is_hidden = false
-          AND active_products_counter > 0
-        ORDER BY active_products_counter DESC
-        LIMIT 30
-    """
-    rows = await pool.fetch(query)
-    return [dict(r) for r in rows]

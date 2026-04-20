@@ -10,16 +10,6 @@ from bot.states import SearchFlow
 
 router = Router()
 
-# Маппінг кнопок меню → ключові слова
-BUTTON_KEYWORDS = {
-    "🎉 Організація свята":        ["організація свята", "організатор", "event manager"],
-    "📸 Фото та відео":            ["фотограф", "відеограф", "фото", "відео"],
-    "🎭 Аніматори та шоу":         ["аніматор", "клоун", "шоу", "фокусник", "ростова лялька"],
-    "🌸 Декор та флористи":        ["декор", "флорист", "квіти", "прикраси"],
-    "📅 Найближчі події":          None,   # → search events
-    "✍️ Свій запит":               None,   # → просимо написати
-}
-
 
 def _build_product_card(p: ProductResult, index: int) -> str:
     lines = [f"<b>{index}. {p.name}</b>"]
@@ -57,59 +47,51 @@ def _build_event_card(e: EventResult, index: int) -> str:
 
 
 async def _do_search(message: Message, state: FSMContext, user_text: str):
-    """Основна логіка пошуку — парсимо намір, шукаємо в БД, відповідаємо."""
-
-    # Беремо історію з стейту
     data = await state.get_data()
     history = data.get("history", [])
 
-    # Показуємо що обробляємо
     thinking_msg = await message.answer("🔍 Шукаю для тебе...")
 
-    # Крок 1: парсимо намір через AI
+    # Крок 1: AI парсить намір і повертає точні category_ids
     parsed = await parse_intent(user_text, history)
 
-    # Оновлюємо історію
     history.append({"role": "user", "content": user_text})
-    await state.update_data(history=history[-8:], last_query=user_text, last_parsed=parsed.__dict__)
+    await state.update_data(
+        history=history[-8:],
+        last_query=user_text,
+        last_intent=parsed.intent,
+        last_category_ids=parsed.category_ids,
+        last_max_price=parsed.max_price,
+        last_offset=0,
+    )
 
     await thinking_msg.delete()
 
-    # Якщо треба уточнення
     if parsed.needs_clarification and parsed.clarification_question:
         await message.answer(parsed.clarification_question)
         return
 
-    # Якщо хочуть менеджера / заявку
     if parsed.intent == "lead":
         from bot.handlers.lead import start_lead_flow
         await start_lead_flow(message, state)
         return
 
-    # Крок 2: пошук в БД
+    # Крок 2: точний пошук по category_ids
     products, events = [], []
 
     if parsed.intent == "event":
         events = await search_events(limit=5)
     else:
         products = await search_products(
-            category_keywords=parsed.category_keywords or None,
+            category_ids=parsed.category_ids or None,
             max_price=parsed.max_price,
             limit=5,
+            offset=0,
         )
 
     # Крок 3: AI форматує відповідь
     ai_text = await format_response(user_text, products or None, events or None)
 
-    # Зберігаємо результати для "ще варіанти"
-    await state.update_data(
-        last_offset=5,
-        last_intent=parsed.intent,
-        last_keywords=parsed.category_keywords,
-        last_max_price=parsed.max_price,
-    )
-
-    # Формуємо картки
     cards = []
     if products:
         for i, p in enumerate(products, 1):
@@ -118,24 +100,21 @@ async def _do_search(message: Message, state: FSMContext, user_text: str):
         for i, e in enumerate(events, 1):
             cards.append(_build_event_card(e, i))
 
-    # Відправляємо
     full_text = ai_text
     if cards:
         full_text += "\n\n" + "\n\n".join(cards)
 
-    # Telegram обмеження 4096 символів
     if len(full_text) > 4000:
         full_text = full_text[:3990] + "..."
 
-    has_results = bool(products or events)
     await message.answer(
         full_text,
-        reply_markup=results_keyboard(has_more=has_results),
+        reply_markup=results_keyboard(has_more=bool(products or events)),
         parse_mode="HTML",
     )
 
 
-# ── Обробники кнопок меню ──────────────────────────────────────────────────
+# ── Кнопки меню ───────────────────────────────────────────────────────────
 
 @router.message(F.text == "📅 Найближчі події")
 async def handle_events_button(message: Message, state: FSMContext):
@@ -148,7 +127,10 @@ async def handle_custom_query(message: Message, state: FSMContext):
     await message.answer("✍️ Напиши свій запит — що саме потрібно знайти?")
 
 
-@router.message(F.text.in_(BUTTON_KEYWORDS.keys()))
+@router.message(F.text.in_([
+    "🎉 Організація свята", "📸 Фото та відео",
+    "🎭 Аніматори та шоу", "🌸 Декор та флористи",
+]))
 async def handle_menu_button(message: Message, state: FSMContext):
     await _do_search(message, state, message.text)
 
@@ -166,16 +148,15 @@ async def handle_free_text(message: Message, state: FSMContext):
     await _do_search(message, state, message.text)
 
 
-# ── Callback: ще варіанти ──────────────────────────────────────────────────
+# ── Ще варіанти ────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "more_results")
 async def callback_more_results(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
-    offset = data.get("last_offset", 5)
+    offset = data.get("last_offset", 0) + 5
     intent = data.get("last_intent", "service")
-    keywords = data.get("last_keywords", [])
+    category_ids = data.get("last_category_ids", [])
     max_price = data.get("last_max_price")
-    last_query = data.get("last_query", "")
 
     await callback.answer("Шукаю ще...")
 
@@ -183,12 +164,13 @@ async def callback_more_results(callback: CallbackQuery, state: FSMContext):
         results = await search_events(limit=5)
     else:
         results = await search_products(
-            category_keywords=keywords or None,
+            category_ids=category_ids or None,
             max_price=max_price,
             limit=5,
+            offset=offset,
         )
 
-    await state.update_data(last_offset=offset + 5)
+    await state.update_data(last_offset=offset)
 
     if not results:
         await callback.message.answer(
