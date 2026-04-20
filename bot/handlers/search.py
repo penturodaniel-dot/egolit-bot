@@ -1,6 +1,7 @@
-from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery, URLInputFile
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 
 from ai.parse import parse_intent
 from ai.respond import format_response
@@ -9,6 +10,9 @@ from bot.keyboards import results_keyboard, main_menu_keyboard
 from bot.states import SearchFlow
 
 router = Router()
+
+# Telegram caption limit
+CAPTION_LIMIT = 1024
 
 
 def _build_product_card(p: ProductResult, index: int) -> str:
@@ -46,13 +50,74 @@ def _build_event_card(e: EventResult, index: int) -> str:
     return "\n".join(lines)
 
 
-async def _do_search(message: Message, state: FSMContext, user_text: str):
+async def _send_product_card(
+    message: Message,
+    bot: Bot,
+    product: ProductResult,
+    index: int,
+    reply_markup=None,
+):
+    """Відправляє картку продукту — з фото якщо є, інакше текстом."""
+    card_text = _build_product_card(product, index)
+
+    if product.photo_url:
+        try:
+            caption = card_text[:CAPTION_LIMIT]
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=URLInputFile(product.photo_url),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            return
+        except (TelegramBadRequest, Exception):
+            # Фото недоступне — падаємо на текст
+            pass
+
+    # Fallback: текстова картка
+    await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
+
+
+async def _send_results(
+    message: Message,
+    bot: Bot,
+    products: list[ProductResult],
+    events: list[EventResult],
+    ai_text: str,
+    has_more: bool,
+):
+    """Відправляє AI-текст і картки результатів."""
+    # Спочатку AI-текст вступу
+    await message.answer(ai_text, parse_mode="HTML")
+
+    if products:
+        for i, p in enumerate(products, 1):
+            # Кнопки тільки на останній картці
+            markup = results_keyboard(has_more=has_more) if i == len(products) else None
+            await _send_product_card(message, bot, p, i, reply_markup=markup)
+
+    elif events:
+        cards = [_build_event_card(e, i) for i, e in enumerate(events, 1)]
+        text = "\n\n".join(cards)
+        if len(text) > 4000:
+            text = text[:3990] + "..."
+        await message.answer(text, parse_mode="HTML", reply_markup=results_keyboard(has_more=has_more))
+
+    else:
+        await message.answer(
+            "Нічого не знайдено. Спробуй змінити запит або поговори з менеджером.",
+            reply_markup=results_keyboard(has_more=False),
+        )
+
+
+async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: str):
     data = await state.get_data()
     history = data.get("history", [])
 
     thinking_msg = await message.answer("🔍 Шукаю для тебе...")
 
-    # Крок 1: AI парсить намір і повертає точні category_ids
+    # Крок 1: AI парсить намір → точні category_ids
     parsed = await parse_intent(user_text, history)
 
     history.append({"role": "user", "content": user_text})
@@ -76,9 +141,8 @@ async def _do_search(message: Message, state: FSMContext, user_text: str):
         await start_lead_flow(message, state)
         return
 
-    # Крок 2: точний пошук по category_ids
+    # Крок 2: пошук в БД
     products, events = [], []
-
     if parsed.intent == "event":
         events = await search_events(limit=5)
     else:
@@ -89,36 +153,17 @@ async def _do_search(message: Message, state: FSMContext, user_text: str):
             offset=0,
         )
 
-    # Крок 3: AI форматує відповідь
+    # Крок 3: AI форматує вступний текст
     ai_text = await format_response(user_text, products or None, events or None)
 
-    cards = []
-    if products:
-        for i, p in enumerate(products, 1):
-            cards.append(_build_product_card(p, i))
-    elif events:
-        for i, e in enumerate(events, 1):
-            cards.append(_build_event_card(e, i))
-
-    full_text = ai_text
-    if cards:
-        full_text += "\n\n" + "\n\n".join(cards)
-
-    if len(full_text) > 4000:
-        full_text = full_text[:3990] + "..."
-
-    await message.answer(
-        full_text,
-        reply_markup=results_keyboard(has_more=bool(products or events)),
-        parse_mode="HTML",
-    )
+    await _send_results(message, bot, products, events, ai_text, has_more=bool(products or events))
 
 
 # ── Кнопки меню ───────────────────────────────────────────────────────────
 
 @router.message(F.text == "📅 Найближчі події")
-async def handle_events_button(message: Message, state: FSMContext):
-    await _do_search(message, state, "найближчі події в Дніпрі")
+async def handle_events_button(message: Message, bot: Bot, state: FSMContext):
+    await _do_search(message, bot, state, "найближчі події в Дніпрі")
 
 
 @router.message(F.text == "✍️ Свій запит")
@@ -131,27 +176,27 @@ async def handle_custom_query(message: Message, state: FSMContext):
     "🎉 Організація свята", "📸 Фото та відео",
     "🎭 Аніматори та шоу", "🌸 Декор та флористи",
 ]))
-async def handle_menu_button(message: Message, state: FSMContext):
-    await _do_search(message, state, message.text)
+async def handle_menu_button(message: Message, bot: Bot, state: FSMContext):
+    await _do_search(message, bot, state, message.text)
 
 
 # ── Вільний текст ──────────────────────────────────────────────────────────
 
 @router.message(SearchFlow.waiting_query)
-async def handle_free_query_state(message: Message, state: FSMContext):
+async def handle_free_query_state(message: Message, bot: Bot, state: FSMContext):
     await state.clear()
-    await _do_search(message, state, message.text)
+    await _do_search(message, bot, state, message.text)
 
 
 @router.message(F.text & ~F.text.startswith("/"))
-async def handle_free_text(message: Message, state: FSMContext):
-    await _do_search(message, state, message.text)
+async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
+    await _do_search(message, bot, state, message.text)
 
 
 # ── Ще варіанти ────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data == "more_results")
-async def callback_more_results(callback: CallbackQuery, state: FSMContext):
+async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMContext):
     data = await state.get_data()
     offset = data.get("last_offset", 0) + 5
     intent = data.get("last_intent", "service")
@@ -162,36 +207,36 @@ async def callback_more_results(callback: CallbackQuery, state: FSMContext):
 
     if intent == "event":
         results = await search_events(limit=5)
+        products, events = [], results
     else:
-        results = await search_products(
+        products = await search_products(
             category_ids=category_ids or None,
             max_price=max_price,
             limit=5,
             offset=offset,
         )
+        events = []
 
     await state.update_data(last_offset=offset)
 
-    if not results:
+    if not products and not events:
         await callback.message.answer(
             "Більше варіантів не знайдено. Спробуй змінити запит.",
             reply_markup=results_keyboard(has_more=False),
         )
         return
 
-    cards = []
-    for i, r in enumerate(results, 1):
-        if isinstance(r, ProductResult):
-            cards.append(_build_product_card(r, i))
-        elif isinstance(r, EventResult):
-            cards.append(_build_event_card(r, i))
-
-    text = "\n\n".join(cards)
-    if len(text) > 4000:
-        text = text[:3990] + "..."
-
-    await callback.message.answer(
-        text,
-        reply_markup=results_keyboard(has_more=True),
-        parse_mode="HTML",
-    )
+    if products:
+        for i, p in enumerate(products, 1):
+            markup = results_keyboard(has_more=True) if i == len(products) else None
+            await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
+    elif events:
+        cards = [_build_event_card(e, i) for i, e in enumerate(events, 1)]
+        text = "\n\n".join(cards)
+        if len(text) > 4000:
+            text = text[:3990] + "..."
+        await callback.message.answer(
+            text,
+            parse_mode="HTML",
+            reply_markup=results_keyboard(has_more=True),
+        )
