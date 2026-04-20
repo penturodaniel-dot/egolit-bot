@@ -1,16 +1,13 @@
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
-from bot.keyboards import lead_cancel_keyboard, main_menu_keyboard, back_to_menu_keyboard
+from bot.keyboards import lead_cancel_keyboard, main_menu_keyboard, back_to_menu_keyboard, manager_choice_keyboard
 from bot.states import LeadFlow
 from db.connection import get_pool
 from config import settings
 
 router = Router()
-
-# Telegram ID менеджера — поки що захардкожено, потім через .env
-MANAGER_CHAT_ID = None  # Встановіть chat_id менеджера
 
 
 async def start_lead_flow(message: Message, state: FSMContext):
@@ -23,7 +20,12 @@ async def start_lead_flow(message: Message, state: FSMContext):
 
 @router.message(F.text == "📞 Поговорити з менеджером")
 async def handle_manager_button(message: Message, state: FSMContext):
-    await start_lead_flow(message, state)
+    await message.answer(
+        "👨‍💼 <b>Як зв'яжемось з менеджером?</b>\n\n"
+        "📝 <b>Залишити заявку</b> — вкажи контакти, менеджер зателефонує\n"
+        "💬 <b>Живий чат</b> — пиши прямо тут, менеджер відповість у Telegram",
+        reply_markup=manager_choice_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "start_lead")
@@ -34,7 +36,21 @@ async def callback_start_lead(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "call_manager")
 async def callback_call_manager(callback: CallbackQuery, state: FSMContext):
-    await start_lead_flow(callback.message, state)
+    await callback.message.answer(
+        "👨‍💼 <b>Як зв'яжемось з менеджером?</b>\n\n"
+        "📝 <b>Залишити заявку</b> — вкажи контакти, менеджер зателефонує\n"
+        "💬 <b>Живий чат</b> — пиши прямо тут, менеджер відповість у Telegram",
+        reply_markup=manager_choice_keyboard(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "start_chat")
+async def callback_start_chat(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    from bot.handlers.human import activate_human_mode
+    await state.clear()
+    # Pass the user's chat id and the user object (from callback, not message)
+    await activate_human_mode(callback.message.chat.id, callback.from_user, bot)
     await callback.answer()
 
 

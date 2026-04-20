@@ -26,6 +26,17 @@ def results_keyboard(has_more: bool = True) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
+def manager_choice_keyboard() -> InlineKeyboardMarkup:
+    """Вибір: залишити заявку або живий чат з менеджером."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📝 Залишити заявку", callback_data="start_lead"),
+            InlineKeyboardButton(text="💬 Живий чат",        callback_data="start_chat"),
+        ],
+        [InlineKeyboardButton(text="🏠 Головне меню", callback_data="main_menu")],
+    ])
+
+
 def lead_cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="❌ Скасувати", callback_data="cancel_lead")]

@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = "egolist2024"
     ADMIN_SECRET_KEY: str = "change-this-in-production"
 
+    # Telegram user ID of the manager who receives live-chat messages.
+    # Get it by messaging @userinfobot. Set to 0 to disable live chat.
+    MANAGER_TELEGRAM_ID: int = 0
+
     class Config:
         env_file = ".env"
 

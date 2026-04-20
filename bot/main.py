@@ -9,7 +9,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import settings
 from db.connection import get_pool, close_pool
 from db.categories_cache import load_categories
+from db.human_sessions import init_human_sessions
 from bot.handlers import start, search, lead
+from bot.handlers import human
 
 logging.basicConfig(
     level=logging.INFO,
@@ -21,6 +23,9 @@ bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=Pars
 dp = Dispatcher(storage=MemoryStorage())
 
 # Реєструємо роутери
+# human.router — ПЕРШИМ, щоб перехоплювати повідомлення юзерів у human-mode
+# та обробляти reply від менеджера до того, як search/lead роутери їх побачать
+dp.include_router(human.router)
 dp.include_router(start.router)
 dp.include_router(lead.router)
 dp.include_router(search.router)   # search останній — ловить весь вільний текст
@@ -32,6 +37,8 @@ async def on_startup():
     logger.info("Database connected.")
     await load_categories()
     logger.info("Categories loaded.")
+    await init_human_sessions()
+    logger.info("Human sessions table ready.")
     me = await bot.get_me()
     logger.info(f"Bot started: @{me.username}")
 

@@ -48,6 +48,15 @@
 
   .empty { text-align: center; padding: 60px; color: #86868b; }
   .empty .icon { font-size: 48px; margin-bottom: 12px; }
+
+  /* Human sessions */
+  .chat-card { background: white; border-radius: 12px; padding: 16px 20px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,.08); display: flex; align-items: center; justify-content: space-between; border-left: 4px solid #007aff; }
+  .chat-info .name { font-size: 16px; font-weight: 600; }
+  .chat-info .meta { font-size: 13px; color: #86868b; margin-top: 3px; }
+  .btn-end { padding: 8px 18px; background: #ff3b30; color: white; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .btn-end:hover { background: #d63029; }
+  .logout-link { margin-left: auto; font-size: 13px; color: #86868b; text-decoration: none; }
+  .logout-link:hover { color: #ff3b30; }
 </style>
 </head>
 <body>
@@ -55,6 +64,7 @@
 <div class="header">
   <h1>Egolist</h1>
   <span>Панель заявок</span>
+  <a href="/logout" class="logout-link" style="margin-left:auto;color:#aaa;text-decoration:none;font-size:13px;">Вийти →</a>
 </div>
 
 <div class="stats">
@@ -77,6 +87,28 @@
 </div>
 
 <div class="container">
+
+  {% if human_sessions %}
+  <h2 style="margin-bottom:14px;">💬 Активні чати ({{ human_sessions|length }})</h2>
+  {% for s in human_sessions %}
+  <div class="chat-card">
+    <div class="chat-info">
+      <div class="name">
+        {% if s.first_name %}{{ s.first_name }}{% endif %}
+        {% if s.username %}<span style="color:#86868b;font-weight:400;"> @{{ s.username }}</span>{% endif %}
+      </div>
+      <div class="meta">
+        🆔 {{ s.user_id }} · з {{ s.started_at.strftime('%d.%m.%Y %H:%M') if s.started_at else '' }}
+      </div>
+    </div>
+    <form method="post" action="/human-session/{{ s.user_id }}/end" style="margin:0;">
+      <button type="submit" class="btn-end">Завершити чат</button>
+    </form>
+  </div>
+  {% endfor %}
+  <div style="margin-bottom:28px;"></div>
+  {% endif %}
+
   <h2>Заявки</h2>
 
   {% if leads %}

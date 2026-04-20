@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 import asyncpg
+import httpx
 from config import settings
 
 app = FastAPI()
@@ -16,6 +17,13 @@ def require_auth(request: Request):
     """Залежність — перевіряє чи залогінений менеджер."""
     if not request.session.get("authenticated"):
         raise Exception("not_authenticated")
+
+
+async def _table_exists(db, table: str) -> bool:
+    row = await db.fetchrow(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = $1", table
+    )
+    return row is not None
 
 
 async def get_db():
@@ -80,12 +88,45 @@ async def index(request: Request):
         FROM bot_leads
     """)
 
+    human_sessions = await db.fetch("""
+        SELECT user_id, username, first_name, started_at
+        FROM human_sessions
+        ORDER BY started_at DESC
+    """) if await _table_exists(db, "human_sessions") else []
+
     await db.close()
     return templates.TemplateResponse("index.html", {
         "request": request,
         "leads": leads,
         "stats": stats,
+        "human_sessions": human_sessions,
     })
+
+
+@app.post("/human-session/{user_id}/end")
+async def end_human_session(request: Request, user_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+
+    db = await get_db()
+    await db.execute("DELETE FROM human_sessions WHERE user_id = $1", user_id)
+    await db.close()
+
+    # Notify user via Telegram Bot API
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": user_id,
+                    "text": "✅ Менеджер завершив чат. Дякуємо!\n\nЧим ще можу допомогти?",
+                    "parse_mode": "HTML",
+                },
+            )
+    except Exception:
+        pass  # Non-critical — session is already deleted from DB
+
+    return RedirectResponse("/", status_code=303)
 
 
 @app.post("/lead/{lead_id}/status")
