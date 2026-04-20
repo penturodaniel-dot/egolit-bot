@@ -1,75 +1,45 @@
 """
-Другий LLM-виклик: форматуємо людську відповідь на основі даних з БД.
+Другий LLM-виклик: генеруємо ТІЛЬКИ короткий вступ (1 речення).
+Деталі по кожній позиції — в окремих картках, не тут.
 """
-import json
 from openai import AsyncOpenAI
 from db.queries import ProductResult, EventResult
 from config import settings
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-SYSTEM_PROMPT = """Ти — міський помічник Egolist. Відповідаєш дружньо, лаконічно, по-українськи.
+SYSTEM_PROMPT = """Ти — помічник Egolist. Відповідай по-українськи, дружньо, коротко.
 
-Правила:
-- Використовуй ТІЛЬКИ дані які надані. Нічого не вигадуй.
-- Для кожної позиції: назва жирним, коротко чому підходить, ціна якщо є.
-- Максимум 3-4 речення на позицію.
-- Не використовуй слова "звичайно", "безперечно", "чудово" — будь природним.
-- Emoji помірно: 1-2 на відповідь, не більше.
-- Якщо результатів немає — чесно скажи і запропонуй змінити запит."""
+Твоя задача: написати ОДНЕ коротке вступне речення до результатів пошуку.
+НЕ перераховуй результати — вони вже будуть показані окремо.
+НЕ описуй кожен варіант — тільки загальний вступ.
 
+Приклади:
+- "Знайшов кілька фотографів у Дніпрі 👇"
+- "Ось аніматори, які підійдуть для дитячого свята 👇"
+- "Знайшов варіанти для організації корпоративу 👇"
 
-def _format_products_for_prompt(products: list[ProductResult]) -> str:
-    items = []
-    for p in products:
-        item = f"- {p.name} ({p.category})"
-        if p.price:
-            item += f", від {p.price} грн"
-        if p.description:
-            item += f". {p.description[:150]}"
-        items.append(item)
-    return "\n".join(items)
+Якщо результатів немає — одне речення що нічого не знайдено і варто змінити запит або звернутись до менеджера."""
 
 
-def _format_events_for_prompt(events: list[EventResult]) -> str:
-    items = []
-    for e in events:
-        item = f"- {e.title}, {e.date}"
-        if e.time:
-            item += f" о {e.time}"
-        if e.price:
-            item += f", {e.price}"
-        if e.place_name:
-            item += f", {e.place_name}"
-        items.append(item)
-    return "\n".join(items)
-
-
-async def format_response(
+async def format_intro(
     user_query: str,
-    products: list[ProductResult] | None = None,
-    events: list[EventResult] | None = None,
+    has_results: bool,
+    count: int = 0,
 ) -> str:
-    if products:
-        data_block = f"Знайдені послуги:\n{_format_products_for_prompt(products)}"
-        task = f'Користувач шукав: "{user_query}". Склади відповідь з рекомендаціями.'
-    elif events:
-        data_block = f"Знайдені події:\n{_format_events_for_prompt(events)}"
-        task = f'Користувач шукав: "{user_query}". Склади відповідь про найближчі події.'
+    if has_results:
+        task = f'Запит: "{user_query}". Знайдено {count} варіантів. Напиши вступне речення.'
     else:
-        data_block = "Результатів не знайдено."
-        task = f'Користувач шукав: "{user_query}". Повідом що нічого не знайдено і запропонуй 2 варіанти: змінити запит або поговорити з менеджером.'
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"{data_block}\n\n{task}"},
-    ]
+        task = f'Запит: "{user_query}". Нічого не знайдено. Напиши одне речення про це.'
 
     response = await client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=messages,
-        temperature=0.5,
-        max_tokens=600,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": task},
+        ],
+        temperature=0.4,
+        max_tokens=80,
     )
 
     return response.choices[0].message.content

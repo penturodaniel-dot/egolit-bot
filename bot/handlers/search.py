@@ -4,7 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
 from ai.parse import parse_intent
-from ai.respond import format_response
+from ai.respond import format_intro
 from db.queries import search_products, search_events, ProductResult, EventResult
 from bot.keyboards import results_keyboard, main_menu_keyboard
 from bot.states import SearchFlow
@@ -153,10 +153,11 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             offset=0,
         )
 
-    # Крок 3: AI форматує вступний текст
-    ai_text = await format_response(user_text, products or None, events or None)
+    # Крок 3: AI генерує короткий вступ (1 речення)
+    count = len(products) or len(events)
+    ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
 
-    await _send_results(message, bot, products, events, ai_text, has_more=bool(products or events))
+    await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events))
 
 
 # ── Кнопки меню ───────────────────────────────────────────────────────────
