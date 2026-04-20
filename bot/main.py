@@ -10,6 +10,7 @@ from config import settings
 from db.connection import get_pool, close_pool
 from db.categories_cache import load_categories
 from db.human_sessions import init_human_sessions
+from db.settings import init_settings
 from bot.handlers import start, search, lead
 from bot.handlers import human
 
@@ -39,6 +40,8 @@ async def on_startup():
     logger.info("Categories loaded.")
     await init_human_sessions()
     logger.info("Human sessions table ready.")
+    await init_settings()
+    logger.info("Settings table ready.")
     me = await bot.get_me()
     logger.info(f"Bot started: @{me.username}")
 

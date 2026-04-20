@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Egolist — Налаштування</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; }
+
+  .header { background: #1d1d1f; color: white; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header a { color: #aaa; text-decoration: none; font-size: 13px; }
+  .header a:hover { color: white; }
+  .header .sep { color: #555; }
+
+  .container { max-width: 600px; margin: 40px auto; padding: 0 24px; }
+
+  .card { background: white; border-radius: 14px; padding: 28px 32px; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 20px; }
+  .card h2 { font-size: 17px; font-weight: 600; margin-bottom: 20px; }
+
+  label { display: block; font-size: 13px; font-weight: 600; color: #3a3a3c; margin-bottom: 6px; }
+  .hint { font-size: 12px; color: #86868b; margin-bottom: 10px; line-height: 1.5; }
+
+  input[type=text], input[type=number] {
+    width: 100%; padding: 11px 14px; border: 1.5px solid #d2d2d7;
+    border-radius: 10px; font-size: 15px; outline: none; transition: border-color .2s;
+    margin-bottom: 4px;
+  }
+  input:focus { border-color: #007aff; }
+
+  .toggle-row { display: flex; align-items: center; gap: 12px; margin-top: 18px; }
+  .toggle-row label { margin: 0; font-size: 14px; font-weight: 500; color: #1d1d1f; }
+  input[type=checkbox] { width: 18px; height: 18px; accent-color: #007aff; cursor: pointer; }
+
+  .btn-row { display: flex; gap: 12px; margin-top: 24px; }
+  .btn { padding: 11px 24px; border: none; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn-primary { background: #1d1d1f; color: white; }
+  .btn-primary:hover { background: #3a3a3c; }
+  .btn-test { background: #007aff; color: white; }
+  .btn-test:hover { background: #0066d6; }
+
+  .alert { border-radius: 10px; padding: 12px 16px; font-size: 13px; margin-bottom: 20px; }
+  .alert-success { background: #f0fff4; color: #1a7a3a; border: 1px solid #b7ebc8; }
+  .alert-error   { background: #fff1f0; color: #c0392b; border: 1px solid #fbc3bb; }
+  .alert-info    { background: #f0f6ff; color: #1a4fa0; border: 1px solid #b3d0ff; }
+
+  .back { display: inline-block; margin-bottom: 20px; font-size: 14px; color: #007aff; text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+
+  .example { font-size: 12px; color: #86868b; font-family: monospace; background: #f5f5f7; padding: 4px 8px; border-radius: 6px; display: inline-block; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Egolist</h1>
+  <span class="sep">/</span>
+  <a href="/">Заявки</a>
+  <span class="sep">/</span>
+  <span style="color:white;">Налаштування</span>
+  <a href="/logout" style="margin-left:auto;">Вийти →</a>
+</div>
+
+<div class="container">
+
+  {% if msg %}
+  <div class="alert alert-{{ msg_type }}">{{ msg }}</div>
+  {% endif %}
+
+  <!-- Notification settings -->
+  <div class="card">
+    <h2>🔔 Сповіщення про нові заявки</h2>
+
+    <div class="hint">
+      Вкажи Telegram Chat ID куди бот надсилатиме сповіщення щоразу, коли клієнт залишає заявку.<br>
+      Це може бути особистий чат, група або канал.
+    </div>
+
+    <form method="post" action="/settings">
+      <input type="hidden" name="action" value="save_notifications">
+
+      <label>Telegram Chat ID</label>
+      <div class="hint">
+        Особистий: числовий ID (напр. <span class="example">123456789</span>)<br>
+        Група або супергрупа: <span class="example">-1001234567890</span><br>
+        Публічний канал: <span class="example">@egolist_leads</span><br><br>
+        Свій ID можна дізнатись через <a href="https://t.me/userinfobot" target="_blank">@userinfobot</a>.
+        Для групи/каналу — додай бота як адміністратора.
+      </div>
+      <input type="text" name="notification_chat_id"
+             value="{{ settings.notification_chat_id }}"
+             placeholder="123456789 або @channel_name">
+
+      <div class="toggle-row">
+        <input type="checkbox" name="notification_enabled" id="notif_enabled"
+               {% if settings.notification_enabled %}checked{% endif %}>
+        <label for="notif_enabled">Сповіщення увімкнені</label>
+      </div>
+
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary">💾 Зберегти</button>
+      </div>
+    </form>
+
+    <form method="post" action="/settings" style="margin-top:12px;">
+      <input type="hidden" name="action" value="test_notification">
+      <button type="submit" class="btn btn-test">📨 Надіслати тест</button>
+    </form>
+  </div>
+
+</div>
+</body>
+</html>

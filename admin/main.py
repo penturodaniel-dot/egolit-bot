@@ -129,6 +129,103 @@ async def end_human_session(request: Request, user_id: int):
     return RedirectResponse("/", status_code=303)
 
 
+# ── Settings ──────────────────────────────────────────────────────────────
+
+async def _get_all_settings(db) -> dict:
+    """Load all admin_settings rows into a dict."""
+    base = {"notification_chat_id": "", "notification_enabled": True}
+    if not await _table_exists(db, "admin_settings"):
+        return base
+    rows = await db.fetch("SELECT key, value FROM admin_settings")
+    for r in rows:
+        if r["key"] == "notification_enabled":
+            base["notification_enabled"] = r["value"] == "1"
+        else:
+            base[r["key"]] = r["value"]
+    return base
+
+
+async def _upsert_setting(db, key: str, value: str) -> None:
+    await db.execute("""
+        INSERT INTO admin_settings (key, value) VALUES ($1, $2)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """, key, value)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request, msg: str = "", msg_type: str = "info"):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    db = await get_db()
+    s = await _get_all_settings(db)
+    await db.close()
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "settings": s,
+        "msg": msg,
+        "msg_type": msg_type,
+    })
+
+
+@app.post("/settings")
+async def settings_save(
+    request: Request,
+    action: str = Form(...),
+    notification_chat_id: str = Form(""),
+    notification_enabled: str = Form(""),   # checkbox sends "on" or nothing
+):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+
+    db = await get_db()
+
+    if action == "save_notifications":
+        # Ensure table exists
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS admin_settings (
+                key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
+            )
+        """)
+        await _upsert_setting(db, "notification_chat_id", notification_chat_id.strip())
+        await _upsert_setting(db, "notification_enabled", "1" if notification_enabled else "0")
+        await db.close()
+        return RedirectResponse("/settings?msg=Збережено&msg_type=success", status_code=303)
+
+    if action == "test_notification":
+        s = await _get_all_settings(db)
+        await db.close()
+        chat_id = s.get("notification_chat_id", "")
+        if not chat_id:
+            return RedirectResponse(
+                "/settings?msg=Спочатку+вкажи+Chat+ID&msg_type=error", status_code=303
+            )
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.post(
+                    f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": "✅ <b>Тест сповіщень</b>\n\nЦей канал налаштований для отримання заявок від Egolist бота.",
+                        "parse_mode": "HTML",
+                    },
+                )
+            if resp.status_code == 200:
+                return RedirectResponse(
+                    "/settings?msg=Тестове+повідомлення+надіслано&msg_type=success", status_code=303
+                )
+            detail = resp.json().get("description", "невідома помилка")
+            return RedirectResponse(
+                f"/settings?msg=Помилка+Telegram:+{detail}&msg_type=error", status_code=303
+            )
+        except Exception as e:
+            return RedirectResponse(
+                f"/settings?msg=Помилка:+{e}&msg_type=error", status_code=303
+            )
+
+    await db.close()
+    return RedirectResponse("/settings", status_code=303)
+
+
 @app.post("/lead/{lead_id}/status")
 async def update_status(
     request: Request,

@@ -160,25 +160,29 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
     await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events))
 
 
-# ── Кнопки меню ───────────────────────────────────────────────────────────
+# ── Кнопки меню (сценарії з ТЗ) ──────────────────────────────────────────
 
-@router.message(F.text == "📅 Найближчі події")
-async def handle_events_button(message: Message, bot: Bot, state: FSMContext):
-    await _do_search(message, bot, state, "найближчі події в Дніпрі")
+# Mapping кнопки → пошуковий запит для AI
+_MENU_QUERIES = {
+    "🌆 Куди піти сьогодні":    "куди піти сьогодні ввечері у Дніпрі",
+    "📅 Події на вихідні":       "цікаві події та заходи на вихідні у Дніпрі",
+    "💑 Ідея для побачення":     "романтичне місце або ідея для побачення у Дніпрі",
+    "👨‍👩‍👧 Куди з дітьми":         "куди піти з дітьми у Дніпрі розваги для дітей",
+    "🍻 Відпочити з друзями":    "де відпочити з друзями у Дніпрі",
+    "🚗 Куди поїхати недалеко":  "куди поїхати на вихідні недалеко від Дніпра заміські локації",
+}
+
+
+@router.message(F.text.in_(_MENU_QUERIES.keys()))
+async def handle_menu_button(message: Message, bot: Bot, state: FSMContext):
+    query = _MENU_QUERIES[message.text]
+    await _do_search(message, bot, state, query)
 
 
 @router.message(F.text == "✍️ Свій запит")
 async def handle_custom_query(message: Message, state: FSMContext):
     await state.set_state(SearchFlow.waiting_query)
     await message.answer("✍️ Напиши свій запит — що саме потрібно знайти?")
-
-
-@router.message(F.text.in_([
-    "🎉 Організація свята", "📸 Фото та відео",
-    "🎭 Аніматори та шоу", "🌸 Декор та флористи",
-]))
-async def handle_menu_button(message: Message, bot: Bot, state: FSMContext):
-    await _do_search(message, bot, state, message.text)
 
 
 # ── Вільний текст ──────────────────────────────────────────────────────────

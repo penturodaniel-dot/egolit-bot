@@ -2,12 +2,42 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
+import logging
+import httpx
 from bot.keyboards import lead_cancel_keyboard, main_menu_keyboard, back_to_menu_keyboard, manager_choice_keyboard
 from bot.states import LeadFlow
 from db.connection import get_pool
+from db.settings import get_notification_chat_id, get_notification_enabled
 from config import settings
 
+logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def _notify_manager(name: str, phone: str, username: str, details: str) -> None:
+    """Send a Telegram notification to the configured chat when a new lead arrives."""
+    if not await get_notification_enabled():
+        return
+    chat_id = await get_notification_chat_id()
+    if not chat_id:
+        return
+
+    text = (
+        "🔔 <b>Нова заявка!</b>\n\n"
+        f"👤 <b>Ім'я:</b> {name}\n"
+        f"📞 <b>Телефон:</b> {phone}\n"
+        f"💬 <b>Telegram:</b> {username}\n"
+        f"\n📝 <b>Деталі:</b>\n{details}"
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
+            )
+    except Exception as e:
+        logger.warning(f"Lead notification failed: {e}")
 
 
 async def start_lead_flow(message: Message, state: FSMContext):
@@ -100,6 +130,9 @@ async def lead_got_details(message: Message, state: FSMContext):
         INSERT INTO bot_leads (name, phone, telegram_id, username, details, status)
         VALUES ($1, $2, $3, $4, $5, 'new')
     """, lead_name, lead_phone, str(user.id), tg_username, lead_details)
+
+    # Сповіщення менеджеру в Telegram
+    await _notify_manager(lead_name, lead_phone, tg_username, lead_details)
 
     await state.clear()
     await message.answer(

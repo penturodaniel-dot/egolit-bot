@@ -4,9 +4,10 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeybo
 def main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🎉 Організація свята"),   KeyboardButton(text="📸 Фото та відео")],
-            [KeyboardButton(text="🎭 Аніматори та шоу"),    KeyboardButton(text="🌸 Декор та флористи")],
-            [KeyboardButton(text="📅 Найближчі події"),     KeyboardButton(text="✍️ Свій запит")],
+            [KeyboardButton(text="🌆 Куди піти сьогодні"),    KeyboardButton(text="📅 Події на вихідні")],
+            [KeyboardButton(text="💑 Ідея для побачення"),     KeyboardButton(text="👨‍👩‍👧 Куди з дітьми")],
+            [KeyboardButton(text="🍻 Відпочити з друзями"),    KeyboardButton(text="🚗 Куди поїхати недалеко")],
+            [KeyboardButton(text="✍️ Свій запит")],
             [KeyboardButton(text="📞 Поговорити з менеджером")],
         ],
         resize_keyboard=True,
