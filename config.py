@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     DEFAULT_CITY_ID: int = 133
     DEFAULT_CITY_NAME: str = "Дніпро"
 
+    ADMIN_LOGIN: str = "admin"
+    ADMIN_PASSWORD: str = "egolist2024"
+    ADMIN_SECRET_KEY: str = "change-this-in-production"
+
     class Config:
         env_file = ".env"
 
