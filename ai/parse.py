@@ -23,41 +23,51 @@ class ParsedIntent(BaseModel):
     clarification_question: Optional[str]
 
 
-def _build_system_prompt(extra_instructions: str = "") -> str:
-    categories = get_categories_prompt()
-    extra = f"\nДОДАТКОВІ ІНСТРУКЦІЇ ВІД АДМІНА:\n{extra_instructions.strip()}\n" if extra_instructions.strip() else ""
-    return f"""Ти — асистент Egolist, маркетплейс послуг для організації заходів та дозвілля в Україні.
+BASE_PROMPT_TEXT = """\
+Ти — асистент Egolist, маркетплейс послуг для організації заходів та дозвілля в Дніпрі (Україна).
 Твоя задача: проаналізувати запит і повернути JSON.
-{extra}
-ДОСТУПНІ КАТЕГОРІЇ (використовуй ТІЛЬКИ ці id):
+
+ВАЖЛИВО: Ми працюємо ТІЛЬКИ в місті Дніпро. НІКОЛИ не питай про місто — воно завжди Дніпро.
+НІКОЛИ не питай уточнень якщо є хоч якийсь натяк на категорію послуги чи події — відразу шукай.
+needs_clarification = true ЛИШЕ якщо запит абсолютно беззмістовний (наприклад, "привіт", "тест", "?").
+
+ДОСТУПНІ КАТЕГОРІЇ:
 {categories}
 
-ПРАВИЛА:
-- intent = "service" — шукають виконавця або послугу
-- intent = "event"   — шукають події або заходи куди піти
-- event_category — якщо intent=event, уточни категорію: "концерти","театр","діти","стендап","фестивалі","клуби","виставки","спорт","цирк" або null якщо всі категорії
-- date_filter — якщо intent=event, визнач часовий фільтр:
-    "today"   — сьогодні (сьогодні, сегодня, today)
-    "weekend" — найближчі вихідні (вихідні, выходные, суботу, неділю, weekend)
-    "week"    — цей тиждень (цього тижня, на тижні, this week)
-    "month"   — цей місяць (цього місяця, this month)
-    null      — без фільтру по даті (всі майбутні події)
-- search_text — якщо згадується конкретний виконавець, артист, група, назва події або ключове слово для пошуку — витягни його. Наприклад: "Ольга Тополя", "Океан Ельзи", "джаз вечір". Інакше null.
-- intent = "lead"    — хочуть залишити заявку або поговорити з менеджером
-- intent = "other"   — незрозуміло що потрібно
-- category_ids — список id категорій з таблиці вище (масив цілих чисел, НЕ порожній якщо intent=service)
-- max_price — максимальний бюджет якщо вказано (ціле число або null)
-- needs_clarification = true ТІЛЬКИ якщо взагалі неможливо визначити що потрібно
-- clarification_question — коротке питання якщо needs_clarification=true
+ПРАВИЛА intent:
+- "service" — шукають виконавця або послугу (фотограф, ді-джей, аніматор, ведучий, тамада, живий звук, кейтеринг тощо)
+- "event"   — шукають подію або захід куди піти (концерт, вистава, фестиваль, стендап тощо)
+- "lead"    — хочуть залишити заявку, поговорити з менеджером, дізнатись ціну, замовити
+- "other"   — абсолютно незрозуміло (привіт, тест, 1234 тощо)
 
-ПРИКЛАДИ:
-"фотограф на весілля" → {{"intent":"service","category_ids":[155],"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+ПРАВИЛА полів:
+- category_ids — список id категорій ТІЛЬКИ якщо intent=service (масив цілих чисел)
+- event_category — якщо intent=event: "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк" або null
+- date_filter — якщо intent=event: "today"|"weekend"|"week"|"month" або null (всі майбутні)
+- search_text — конкретне ім'я виконавця, артиста, назва події або ключове слово. Інакше null.
+- max_price — максимальний бюджет якщо вказано (ціле число або null)
+- needs_clarification — true ТІЛЬКИ якщо запит повністю беззмістовний
+- clarification_question — коротке питання ТІЛЬКИ якщо needs_clarification=true
+
+ПРИКЛАДИ (needs_clarification завжди false для реальних запитів):
+"фотограф" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"потрібен фотограф" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"фотограф на весілля" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"ді-джей до 3000 грн" → {{"intent":"service","category_ids":[101],"event_category":null,"search_text":null,"date_filter":null,"max_price":3000,"needs_clarification":false,"clarification_question":null}}
+"аніматор для дітей" → {{"intent":"service","category_ids":[102],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 "концерт Ольги Тополі" → {{"intent":"event","category_ids":[],"event_category":"концерти","search_text":"Ольга Тополя","date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 "куди сьогодні піти" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
 "події на вихідних" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"weekend","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"скільки коштує" → {{"intent":"lead","category_ids":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 
 Відповідай ТІЛЬКИ валідним JSON без пояснень."""
+
+
+def _build_system_prompt(extra_instructions: str = "") -> str:
+    categories = get_categories_prompt()
+    extra = f"\nДОДАТКОВІ ІНСТРУКЦІЇ ВІД АДМІНА:\n{extra_instructions.strip()}\n" if extra_instructions.strip() else ""
+    return BASE_PROMPT_TEXT.format(categories=categories) + extra
 
 
 async def parse_intent(user_text: str, history: list[dict] | None = None) -> ParsedIntent:

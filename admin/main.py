@@ -552,7 +552,17 @@ async def api_get_prompt(request: Request):
     """)
     row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'ai_prompt_extra'")
     await db.close()
-    return JSONResponse({"ai_prompt_extra": row["value"] if row else ""})
+    # Also return the base prompt so admin can see it (read-only reference)
+    try:
+        from ai.parse import BASE_PROMPT_TEXT
+        from db.categories_cache import get_categories_prompt
+        base = BASE_PROMPT_TEXT.replace("{categories}", get_categories_prompt())
+    except Exception:
+        base = ""
+    return JSONResponse({
+        "ai_prompt_extra": row["value"] if row else "",
+        "base_prompt": base,
+    })
 
 
 @app.post("/api/prompt")
