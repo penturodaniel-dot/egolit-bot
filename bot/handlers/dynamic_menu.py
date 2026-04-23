@@ -1,9 +1,10 @@
 """
 Dynamic menu button handler.
-Intercepts reply-keyboard button presses and dispatches to the correct action.
-Registered BEFORE search.router so menu buttons are handled first.
+Uses a custom filter so ONLY known button texts are intercepted here.
+Unknown text falls through to search.router as free-form queries.
 """
 from aiogram import Router, F, Bot
+from aiogram.filters import BaseFilter
 from aiogram.types import Message
 from aiogram.fsm.context import FSMContext
 
@@ -13,6 +14,16 @@ from bot.menu_cache import (
 from bot.states import SearchFlow
 
 router = Router()
+
+
+# ── Custom filter: only matches known dynamic button texts ────────────────
+
+class IsDynamicButton(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        if not message.text:
+            return False
+        await ensure_loaded()
+        return find_button(message.text) is not None
 
 
 # ── Back button ───────────────────────────────────────────────────────────
@@ -25,16 +36,16 @@ async def handle_back(message: Message, state: FSMContext):
 
 
 # ── Dynamic button dispatcher ─────────────────────────────────────────────
+# IsDynamicButton filter ensures only known buttons reach this handler.
+# All other text falls through to search.router.
 
-@router.message(F.text)
+@router.message(IsDynamicButton())
 async def handle_dynamic_button(message: Message, bot: Bot, state: FSMContext):
-    await ensure_loaded()
     btn = find_button(message.text)
     if btn is None:
-        return   # not a menu button — let search.router handle free text
+        return  # should never happen due to filter, but safety net
 
     if btn.action_type == "submenu":
-        # Show child buttons
         await message.answer(
             f"{btn.display}\n\nОберіть варіант:",
             reply_markup=sub_menu_keyboard(btn.id),
@@ -64,4 +75,3 @@ async def handle_dynamic_button(message: Message, bot: Bot, state: FSMContext):
             "або підключіться до живого чату прямо зараз.",
             reply_markup=manager_choice_keyboard(),
         )
-        return
