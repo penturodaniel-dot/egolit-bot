@@ -79,6 +79,33 @@ async def _send_product_card(
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
 
 
+async def _send_event_card(
+    message: Message,
+    bot: Bot,
+    event: EventResult,
+    index: int,
+    reply_markup=None,
+):
+    """Відправляє картку події — з фото якщо є, інакше текстом."""
+    card_text = _build_event_card(event, index)
+
+    if event.photo_url:
+        try:
+            caption = card_text[:CAPTION_LIMIT]
+            await bot.send_photo(
+                chat_id=message.chat.id,
+                photo=URLInputFile(event.photo_url),
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+            return
+        except (TelegramBadRequest, Exception):
+            pass
+
+    await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
+
+
 async def _send_results(
     message: Message,
     bot: Bot,
@@ -93,16 +120,13 @@ async def _send_results(
 
     if products:
         for i, p in enumerate(products, 1):
-            # Кнопки тільки на останній картці
             markup = results_keyboard(has_more=has_more) if i == len(products) else None
             await _send_product_card(message, bot, p, i, reply_markup=markup)
 
     elif events:
-        cards = [_build_event_card(e, i) for i, e in enumerate(events, 1)]
-        text = "\n\n".join(cards)
-        if len(text) > 4000:
-            text = text[:3990] + "..."
-        await message.answer(text, parse_mode="HTML", reply_markup=results_keyboard(has_more=has_more))
+        for i, e in enumerate(events, 1):
+            markup = results_keyboard(has_more=has_more) if i == len(events) else None
+            await _send_event_card(message, bot, e, i, reply_markup=markup)
 
     else:
         await message.answer(
@@ -143,12 +167,16 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         return
 
     # Крок 2: пошук в БД
+    today_only = any(w in user_text.lower() for w in ("сьогодні", "сегодня", "today"))
+    await state.update_data(last_today_only=today_only)
+
     products, events = [], []
     if parsed.intent == "event":
         # Спочатку шукаємо в Karabas (з фільтром по категорії якщо є)
         events = await search_karabas_events(
             category=parsed.event_category,
             limit=5,
+            today_only=today_only,
         )
         # Fallback на старі events якщо Karabas порожній
         if not events:
@@ -195,11 +223,13 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     category_ids = data.get("last_category_ids", [])
     max_price = data.get("last_max_price")
 
+    today_only = data.get("last_today_only", False)
+
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
         results = await search_karabas_events(
-            category=event_category, limit=5, offset=offset
+            category=event_category, limit=5, offset=offset, today_only=today_only
         )
         if not results:
             results = await search_events(limit=5)
@@ -227,12 +257,6 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
             markup = results_keyboard(has_more=True) if i == len(products) else None
             await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
     elif events:
-        cards = [_build_event_card(e, i) for i, e in enumerate(events, 1)]
-        text = "\n\n".join(cards)
-        if len(text) > 4000:
-            text = text[:3990] + "..."
-        await callback.message.answer(
-            text,
-            parse_mode="HTML",
-            reply_markup=results_keyboard(has_more=True),
-        )
+        for i, e in enumerate(events, 1):
+            markup = results_keyboard(has_more=True) if i == len(events) else None
+            await _send_event_card(callback.message, bot, e, i, reply_markup=markup)

@@ -118,6 +118,7 @@ async def search_karabas_events(
     category: str | None = None,
     limit: int = 5,
     offset: int = 0,
+    today_only: bool = False,
 ) -> list[EventResult]:
     """Search events scraped from Karabas.com. Falls back to empty list if table missing."""
     pool = await get_pool()
@@ -130,7 +131,8 @@ async def search_karabas_events(
         return []
 
     params: list = []
-    where = ["is_active = TRUE", "date >= CURRENT_DATE"]
+    where = ["is_active = TRUE"]
+    where.append("date = CURRENT_DATE" if today_only else "date >= CURRENT_DATE")
 
     if category:
         where.append(f"category = ${len(params)+1}")
