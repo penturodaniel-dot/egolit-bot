@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, date as date_type, time as time_type
 from typing import Optional
 
 import httpx
@@ -211,10 +211,10 @@ def _extract_from_html(soup: BeautifulSoup, category_ua: str) -> list[dict]:
     return events
 
 
-def _parse_iso(iso: str) -> tuple[Optional[str], Optional[str]]:
+def _parse_iso(iso: str) -> tuple[Optional[date_type], Optional[time_type]]:
     try:
         dt = datetime.fromisoformat(iso)
-        return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
+        return dt.date(), dt.time()
     except Exception:
         return None, None
 
@@ -225,10 +225,10 @@ async def _upsert_event(pool, evt: dict, category_ua: str) -> tuple[Optional[str
     if not title or not source_url:
         return None, "skip"
 
-    date_str, time_str = _parse_iso(evt.get("startDate") or "")
+    date_obj, time_obj = _parse_iso(evt.get("startDate") or "")
 
     # Skip past events
-    if date_str and date_str < datetime.now().strftime("%Y-%m-%d"):
+    if date_obj and date_obj < datetime.now().date():
         return source_url, "skip"
 
     # Price
@@ -266,7 +266,7 @@ async def _upsert_event(pool, evt: dict, category_ua: str) -> tuple[Optional[str
                    place_name=$5, image_url=$6, category=$7,
                    is_active=TRUE, scraped_at=NOW()
              WHERE source_url=$8
-        """, title, date_str, time_str, price,
+        """, title, date_obj, time_obj, price,
              place_name, image_url, category_ua, source_url)
         return source_url, "updated"
     else:
@@ -274,6 +274,6 @@ async def _upsert_event(pool, evt: dict, category_ua: str) -> tuple[Optional[str
             INSERT INTO karabas_events
                 (title, date, time, price, place_name, image_url, source_url, category)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-        """, title, date_str, time_str, price,
+        """, title, date_obj, time_obj, price,
              place_name, image_url, source_url, category_ua)
         return source_url, "new"
