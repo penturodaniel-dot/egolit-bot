@@ -33,6 +33,28 @@ def _card_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
+def _product_contact_keyboard(
+    p: "ProductResult",
+    more_markup: InlineKeyboardMarkup | None = None,
+) -> InlineKeyboardMarkup | None:
+    """Build contact keyboard for a product: best available contact method."""
+    rows = []
+    if p.telegram_contact:
+        handle = p.telegram_contact.lstrip("@")
+        rows.append([InlineKeyboardButton(text="💬 Написати в Telegram", url=f"https://t.me/{handle}")])
+    elif p.phone:
+        phone = p.phone.replace(" ", "").replace("-", "")
+        rows.append([InlineKeyboardButton(text="📞 Зателефонувати", url=f"tel:{phone}")])
+    elif p.instagram:
+        handle = p.instagram.lstrip("@")
+        rows.append([InlineKeyboardButton(text="📷 Instagram", url=f"https://instagram.com/{handle}")])
+    elif p.website:
+        rows.append([InlineKeyboardButton(text="🌐 Сайт", url=p.website)])
+    if more_markup:
+        rows.extend(more_markup.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
 async def _keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> None:
     """Resends typing action every 4s so the indicator stays alive during long searches."""
     while not stop_event.is_set():
@@ -163,7 +185,7 @@ async def _send_results(
             await bot.send_chat_action(message.chat.id, "upload_photo")
             is_last = i == len(products)
             more = results_keyboard(has_more=has_more) if is_last else None
-            markup = _card_keyboard(p.product_url, "👤 Відкрити профіль", more)
+            markup = _product_contact_keyboard(p, more)
             await _send_product_card(message, bot, p, i, reply_markup=markup)
             if progress_msg and is_last:
                 try:
@@ -332,7 +354,7 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         for i, p in enumerate(products, 1):
             is_last = i == len(products)
             more = results_keyboard(has_more=True) if is_last else None
-            markup = _card_keyboard(p.product_url, "👤 Відкрити профіль", more)
+            markup = _product_contact_keyboard(p, more)
             await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
     elif events:
         for i, e in enumerate(events, 1):
