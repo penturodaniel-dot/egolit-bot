@@ -236,6 +236,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             last_event_category=parsed.event_category,
             last_category_ids=parsed.category_ids,
             last_max_price=parsed.max_price,
+            last_search_text=parsed.search_text,
             last_offset=0,
         )
 
@@ -252,7 +253,8 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
         # Крок 2: пошук в БД
         date_filter = parsed.date_filter  # "today" | "weekend" | "week" | "month" | None
-        await state.update_data(last_date_filter=date_filter)
+        search_text = parsed.search_text
+        await state.update_data(last_date_filter=date_filter, last_search_text=search_text)
 
         products, events = [], []
         if parsed.intent == "event":
@@ -260,6 +262,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                 category=parsed.event_category,
                 limit=5,
                 date_filter=date_filter,
+                search_text=search_text,
             )
             if not events:
                 events = await search_events(limit=5)
@@ -267,6 +270,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             products = await search_products(
                 category_ids=parsed.category_ids or None,
                 max_price=parsed.max_price,
+                search_text=search_text,
                 limit=5,
                 offset=0,
             )
@@ -323,12 +327,14 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     max_price = data.get("last_max_price")
 
     date_filter = data.get("last_date_filter")
+    search_text = data.get("last_search_text")
 
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
         results = await search_karabas_events(
-            category=event_category, limit=5, offset=offset, date_filter=date_filter
+            category=event_category, limit=5, offset=offset,
+            date_filter=date_filter, search_text=search_text,
         )
         if not results:
             results = await search_events(limit=5)
@@ -337,6 +343,7 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         products = await search_products(
             category_ids=category_ids or None,
             max_price=max_price,
+            search_text=search_text,
             limit=5,
             offset=offset,
         )

@@ -342,6 +342,45 @@ async def sync_events(request: Request):
         )
 
 
+# ── AI Prompt editor ─────────────────────────────────────────────────────
+
+@app.get("/prompt", response_class=HTMLResponse)
+async def prompt_page(request: Request, msg: str = "", msg_type: str = "info"):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    db = await get_db()
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_settings (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'ai_prompt_extra'")
+    await db.close()
+    current = row["value"] if row else ""
+    return templates.TemplateResponse("prompt.html", {
+        "request": request,
+        "current_prompt": current,
+        "msg": msg,
+        "msg_type": msg_type,
+    })
+
+
+@app.post("/prompt")
+async def prompt_save(
+    request: Request,
+    ai_prompt_extra: str = Form(""),
+):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    db = await get_db()
+    await db.execute("""
+        INSERT INTO admin_settings (key, value) VALUES ('ai_prompt_extra', $1)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """, ai_prompt_extra.strip())
+    await db.close()
+    return RedirectResponse("/prompt?msg=Збережено&msg_type=success", status_code=303)
+
+
 @app.post("/lead/{lead_id}/status")
 async def update_status(
     request: Request,

@@ -46,6 +46,7 @@ async def search_products(
     category_ids: list[int] | None = None,
     city_id: int | None = None,
     max_price: int | None = None,
+    search_text: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[ProductResult]:
@@ -69,6 +70,11 @@ async def search_products(
     if category_ids:
         where_parts.append(f"p.category_id = ANY(${idx})")
         params.append(category_ids)
+        idx += 1
+
+    if search_text:
+        where_parts.append(f"(p.name ILIKE ${idx} OR p.description ILIKE ${idx})")
+        params.append(f"%{search_text}%")
         idx += 1
 
     where_sql = " AND ".join(where_parts)
@@ -126,6 +132,7 @@ async def search_karabas_events(
     limit: int = 5,
     offset: int = 0,
     date_filter: str | None = None,
+    search_text: str | None = None,
 ) -> list[EventResult]:
     """Search events scraped from Karabas.com. Falls back to empty list if table missing.
 
@@ -161,6 +168,10 @@ async def search_karabas_events(
     if category:
         where.append(f"category = ${len(params)+1}")
         params.append(category)
+
+    if search_text:
+        where.append(f"title ILIKE ${len(params)+1}")
+        params.append(f"%{search_text}%")
 
     where_sql = " AND ".join(where)
     params += [limit, offset]

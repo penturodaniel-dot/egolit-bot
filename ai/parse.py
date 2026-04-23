@@ -17,16 +17,18 @@ class ParsedIntent(BaseModel):
     category_ids: list[int]               # [100, 155] — точні ID з БД
     event_category: Optional[str]         # "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк"|null
     date_filter: Optional[str]            # "today" | "weekend" | "week" | "month" | null (all future)
+    search_text: Optional[str]            # artist/performer name or keyword, e.g. "Ольга Тополя"
     max_price: Optional[int]              # 1500
     needs_clarification: bool
     clarification_question: Optional[str]
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(extra_instructions: str = "") -> str:
     categories = get_categories_prompt()
+    extra = f"\nДОДАТКОВІ ІНСТРУКЦІЇ ВІД АДМІНА:\n{extra_instructions.strip()}\n" if extra_instructions.strip() else ""
     return f"""Ти — асистент Egolist, маркетплейс послуг для організації заходів та дозвілля в Україні.
 Твоя задача: проаналізувати запит і повернути JSON.
-
+{extra}
 ДОСТУПНІ КАТЕГОРІЇ (використовуй ТІЛЬКИ ці id):
 {categories}
 
@@ -40,6 +42,7 @@ def _build_system_prompt() -> str:
     "week"    — цей тиждень (цього тижня, на тижні, this week)
     "month"   — цей місяць (цього місяця, this month)
     null      — без фільтру по даті (всі майбутні події)
+- search_text — якщо згадується конкретний виконавець, артист, група, назва події або ключове слово для пошуку — витягни його. Наприклад: "Ольга Тополя", "Океан Ельзи", "джаз вечір". Інакше null.
 - intent = "lead"    — хочуть залишити заявку або поговорити з менеджером
 - intent = "other"   — незрозуміло що потрібно
 - category_ids — список id категорій з таблиці вище (масив цілих чисел, НЕ порожній якщо intent=service)
@@ -48,17 +51,24 @@ def _build_system_prompt() -> str:
 - clarification_question — коротке питання якщо needs_clarification=true
 
 ПРИКЛАДИ:
-"фотограф на весілля" → {{"intent":"service","category_ids":[155],"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"куди сьогодні піти" → {{"intent":"event","category_ids":[],"event_category":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"події на вихідних" → {{"intent":"event","category_ids":[],"event_category":null,"date_filter":"weekend","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"концерти на цьому тижні" → {{"intent":"event","category_ids":[],"event_category":"концерти","date_filter":"week","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"фотограф на весілля" → {{"intent":"service","category_ids":[155],"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"концерт Ольги Тополі" → {{"intent":"event","category_ids":[],"event_category":"концерти","search_text":"Ольга Тополя","date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"куди сьогодні піти" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"події на вихідних" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"weekend","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 
 Відповідай ТІЛЬКИ валідним JSON без пояснень."""
 
 
 async def parse_intent(user_text: str, history: list[dict] | None = None) -> ParsedIntent:
-    messages = [{"role": "system", "content": _build_system_prompt()}]
+    # Load admin custom instructions from DB (cached implicitly via asyncpg pool)
+    try:
+        from db.settings import get_setting
+        extra = await get_setting("ai_prompt_extra", "")
+    except Exception:
+        extra = ""
+
+    messages = [{"role": "system", "content": _build_system_prompt(extra)}]
 
     if history:
         messages.extend(history[-4:])
@@ -91,6 +101,7 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
         category_ids=category_ids,
         event_category=data.get("event_category") or None,
         date_filter=data.get("date_filter") or None,
+        search_text=data.get("search_text") or None,
         max_price=data.get("max_price"),
         needs_clarification=data.get("needs_clarification", False),
         clarification_question=data.get("clarification_question"),
