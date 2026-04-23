@@ -37,19 +37,20 @@ def _product_contact_keyboard(
     p: "ProductResult",
     more_markup: InlineKeyboardMarkup | None = None,
 ) -> InlineKeyboardMarkup | None:
-    """Build contact keyboard for a product: best available contact method."""
+    """Build contact keyboard for a product: best available URL-based contact.
+    Phone is shown in card text — tel: links are not supported by Telegram inline buttons.
+    Priority: Telegram > Instagram > Website.
+    """
     rows = []
     if p.telegram_contact:
         handle = p.telegram_contact.lstrip("@")
         rows.append([InlineKeyboardButton(text="💬 Написати в Telegram", url=f"https://t.me/{handle}")])
-    elif p.phone:
-        phone = p.phone.replace(" ", "").replace("-", "")
-        rows.append([InlineKeyboardButton(text="📞 Зателефонувати", url=f"tel:{phone}")])
     elif p.instagram:
         handle = p.instagram.lstrip("@")
         rows.append([InlineKeyboardButton(text="📷 Instagram", url=f"https://instagram.com/{handle}")])
     elif p.website:
-        rows.append([InlineKeyboardButton(text="🌐 Сайт", url=p.website)])
+        website = p.website if p.website.startswith("http") else f"https://{p.website}"
+        rows.append([InlineKeyboardButton(text="🌐 Сайт", url=website)])
     if more_markup:
         rows.extend(more_markup.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
