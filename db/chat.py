@@ -261,6 +261,12 @@ async def create_quick_reply(title: str, content: str, position: int = 0) -> Non
     )
 
 
+async def delete_session(session_id: int) -> None:
+    """Hard-delete a session and all its messages (cascade via FK)."""
+    pool = await get_pool()
+    await pool.execute("DELETE FROM chat_sessions WHERE id = $1", session_id)
+
+
 async def delete_quick_reply(reply_id: int) -> None:
     pool = await get_pool()
     await pool.execute("DELETE FROM quick_replies WHERE id = $1", reply_id)

@@ -1,6 +1,6 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect } from 'react';
-import { getManagerStatus, setManagerStatus } from '../api.js';
+import { getManagerStatus, setManagerStatus, logout } from '../api.js';
 
 // Navigation items matching variant2 design
 const NAV_SECTIONS = [
@@ -101,6 +101,11 @@ export default function Sidebar() {
       .catch(() => {});
   }, []);
 
+  const handleLogout = async () => {
+    try { await logout(); } catch {}
+    navigate('/login');
+  };
+
   const handleToggleStatus = async () => {
     const next = !online;
     setOnline(next);
@@ -163,27 +168,23 @@ export default function Sidebar() {
         <div className="manager-card">
           <div className="manager-avatar">
             {initials}
-            <div
-              className="online-indicator"
-              style={{ background: online ? '#10b981' : '#94a3b8' }}
-            />
+            <div className="online-indicator" style={{ background: online ? '#10b981' : '#94a3b8' }} />
           </div>
           <div className="manager-info">
             <div className="manager-name">{managerName}</div>
-            <div
-              className="manager-status"
-              style={{ color: online ? 'var(--online)' : 'var(--text-muted)' }}
+            <button
+              className={`toggle-pill${online ? '' : ' offline'}`}
+              onClick={handleToggleStatus}
+              title={online ? 'Перейти в офлайн' : 'Перейти в онлайн'}
             >
-              {online ? '● Онлайн' : '● Офлайн'}
-            </div>
+              <div className="toggle-dot" />
+              {online ? 'Онлайн' : 'Офлайн'}
+            </button>
           </div>
-          <button
-            className={`toggle-pill${online ? '' : ' offline'}`}
-            onClick={handleToggleStatus}
-            title={online ? 'Перейти в офлайн' : 'Перейти в онлайн'}
-          >
-            <div className="toggle-dot" />
-            {online ? 'В мережі' : 'Офлайн'}
+          <button className="logout-btn" onClick={handleLogout} title="Вийти">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+            </svg>
           </button>
         </div>
       </div>
@@ -192,6 +193,7 @@ export default function Sidebar() {
         .sidebar {
           width: 230px;
           min-width: 230px;
+          max-width: 230px;
           background: var(--sidebar-bg);
           display: flex;
           flex-direction: column;
@@ -199,6 +201,7 @@ export default function Sidebar() {
           box-shadow: 2px 0 12px rgba(0,0,0,0.04);
           z-index: 10;
           height: 100%;
+          overflow: hidden;
         }
         .sidebar-logo {
           padding: 22px 20px 18px;
@@ -278,22 +281,26 @@ export default function Sidebar() {
           border: 2px solid var(--sidebar-bg);
           position: absolute; bottom: -1px; right: -1px;
         }
-        .manager-info { flex: 1; min-width: 0; }
         .manager-name { font-size: 12.5px; font-weight: 700; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .manager-status { font-size: 10.5px; font-weight: 500; }
+        .manager-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
         .toggle-pill {
-          display: flex; align-items: center; gap: 5px;
-          padding: 4px 8px;
+          display: inline-flex; align-items: center; gap: 4px;
+          padding: 3px 7px;
           border-radius: 20px;
-          background: #dcfce7;
-          border: 1px solid #bbf7d0;
-          cursor: pointer;
-          transition: all 0.2s;
+          background: #dcfce7; border: 1px solid #bbf7d0;
+          cursor: pointer; transition: all 0.2s;
           font-size: 10px; font-weight: 600; color: #16a34a;
-          white-space: nowrap;
+          white-space: nowrap; align-self: flex-start;
         }
         .toggle-pill.offline { background: #f1f5f9; border-color: var(--border); color: var(--text-muted); }
-        .toggle-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+        .toggle-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+        .logout-btn {
+          width: 30px; height: 30px; border-radius: 8px; flex-shrink: 0;
+          background: var(--bg); border: 1px solid var(--border);
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; color: var(--text-muted); transition: all 0.15s;
+        }
+        .logout-btn:hover { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
       `}</style>
     </aside>
   );

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   getSessions, getMessages, sendMessage,
-  setSessionStatus, setSessionTag, markSessionRead,
+  setSessionStatus, setSessionTag, markSessionRead, deleteSession,
   getQuickReplies, createQuickReply, deleteQuickReply,
 } from '../api.js';
 
@@ -50,9 +50,9 @@ function groupByDate(messages) {
   const groups = [];
   let lastDate = null;
   for (const msg of messages) {
-    const d = msg.created_at ? new Date(msg.created_at).toDateString() : null;
+    const d = msg.sent_at ? new Date(msg.sent_at).toDateString() : null;
     if (d !== lastDate) {
-      groups.push({ type: 'divider', date: msg.created_at, key: d });
+      groups.push({ type: 'divider', date: msg.sent_at, key: d });
       lastDate = d;
     }
     groups.push(msg);
@@ -132,7 +132,7 @@ function SessionItem({ session, active, onClick }) {
 
 // ─── Chat Header ──────────────────────────────────────────────────────────────
 
-function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose }) {
+function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose, onDelete }) {
   if (!session) return null;
   const color = avatarColor(session.id);
   const name = session.first_name
@@ -181,6 +181,11 @@ function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose }
             <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
           </svg>
         </button>
+        <button className="icon-btn icon-btn-danger" onClick={onDelete} title="Видалити чат повністю">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
+          </svg>
+        </button>
       </div>
     </div>
   );
@@ -190,28 +195,26 @@ function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose }
 
 function MessageBubble({ msg, session }) {
   const isOut = msg.direction === 'out';
-  const color = avatarColor(session?.id);
-  const initials = getInitials(
-    session?.first_name
-      ? `${session.first_name} ${session.last_name || ''}`
-      : session?.username || ''
-  );
+  const senderName = isOut
+    ? 'Менеджер'
+    : session?.first_name
+      ? `${session.first_name}${session.last_name ? ' ' + session.last_name : ''}`
+      : session?.username || 'Клієнт';
 
   return (
     <div className={`msg-row${isOut ? ' out' : ''}`}>
-      {!isOut && (
-        <div className="msg-avatar-sm" style={{ background: color, color: '#fff' }}>{initials}</div>
-      )}
-      <div>
-        <div className={`bubble ${isOut ? 'out' : 'in'}`}>{msg.text}</div>
+      <div className="bubble-wrap">
+        <div className="bubble-sender">{senderName}</div>
+        <div className={`bubble ${isOut ? 'out' : 'in'}`}>{msg.content}</div>
         <div className="bubble-meta">
-          {formatMsgTime(msg.created_at)}
-          {isOut && <span className="tick-read">✓✓</span>}
+          {formatMsgTime(msg.sent_at)}
+          {isOut && (
+            <span className={msg.is_read ? 'tick-read' : 'tick-sent'} title={msg.is_read ? 'Прочитано' : 'Доставлено'}>
+              {msg.is_read ? '✓✓' : '✓'}
+            </span>
+          )}
         </div>
       </div>
-      {isOut && (
-        <div className="msg-avatar-sm" style={{ background: 'linear-gradient(135deg,#ff6b35,#0066ff)', color: '#fff' }}>АД</div>
-      )}
     </div>
   );
 }
@@ -516,22 +519,17 @@ export default function Chats() {
     setSending(true);
     setInputText('');
 
-    // Optimistic update
-    const tempMsg = {
-      id: Date.now(),
-      direction: 'out',
-      text,
-      created_at: new Date().toISOString(),
-      _temp: true,
-    };
-    setMessages((prev) => [...prev, tempMsg]);
-
     try {
       await sendMessage(activeSession.id, text);
+      // Immediately fetch to show the sent message (no optimistic = no duplicates)
+      const newMsgs = await getMessages(activeSession.id, lastMsgId);
+      if (newMsgs.length > 0) {
+        setMessages((prev) => [...prev, ...newMsgs]);
+        const maxId = Math.max(...newMsgs.map((m) => m.id));
+        setLastMsgId((prev) => Math.max(prev, maxId));
+      }
     } catch {
-      // Remove optimistic message on error
-      setMessages((prev) => prev.filter((m) => m.id !== tempMsg.id));
-      setInputText(text);
+      setInputText(text); // restore text on error
     } finally {
       setSending(false);
     }
@@ -580,6 +578,17 @@ export default function Chats() {
       await setSessionStatus(activeSession.id, 'closed');
       setActiveSession((prev) => ({ ...prev, status: 'closed' }));
       setSessions((prev) => prev.map((s) => s.id === activeSession.id ? { ...s, status: 'closed' } : s));
+    } catch {}
+  };
+
+  const handleDeleteSession = async () => {
+    if (!activeSession) return;
+    if (!window.confirm(`Видалити чат з ${activeSession.first_name || activeSession.username || 'користувачем'} повністю? Всі повідомлення буде видалено з БД.`)) return;
+    try {
+      await deleteSession(activeSession.id);
+      setSessions((prev) => prev.filter((s) => s.id !== activeSession.id));
+      setActiveSession(null);
+      setMessages([]);
     } catch {}
   };
 
@@ -706,6 +715,7 @@ export default function Chats() {
                 onTakeOver={handleTakeOver}
                 onReturnToAI={handleReturnToAI}
                 onClose={handleCloseSession}
+                onDelete={handleDeleteSession}
               />
 
               {/* Messages */}
@@ -984,10 +994,16 @@ export default function Chats() {
           font-size: 10px; font-weight: 700; flex-shrink: 0;
           margin-bottom: 2px; box-shadow: var(--shadow);
         }
+        .bubble-wrap {
+          flex: 1; min-width: 0; max-width: 68%;
+          display: flex; flex-direction: column;
+        }
+        .msg-row.out .bubble-wrap { align-items: flex-end; }
         .bubble {
-          max-width: 62%; padding: 11px 15px;
+          padding: 11px 15px;
           border-radius: var(--radius); line-height: 1.6;
           font-size: 13.5px; white-space: pre-wrap; word-break: break-word;
+          max-width: 100%;
         }
         .bubble.in {
           background: var(--card-bg); color: var(--text-primary);
@@ -1005,7 +1021,14 @@ export default function Chats() {
           margin-top: 5px; display: flex; align-items: center; gap: 4px;
         }
         .msg-row.out .bubble-meta { justify-content: flex-end; color: rgba(255,107,53,0.7); }
+        .bubble-sender {
+          font-size: 11px; font-weight: 600; color: var(--text-muted);
+          margin-bottom: 3px; padding: 0 2px;
+        }
+        .msg-row.out .bubble-sender { text-align: right; color: rgba(255,107,53,0.55); }
+        .tick-sent { color: rgba(255,107,53,0.5); font-size: 12px; }
         .tick-read { color: var(--accent2); font-size: 12px; }
+        .icon-btn-danger:hover { background: #fef2f2 !important; border-color: #fecaca !important; color: #dc2626 !important; }
 
         /* Input */
         .input-area {

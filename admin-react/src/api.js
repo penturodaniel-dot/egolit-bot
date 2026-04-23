@@ -52,6 +52,9 @@ export const setSessionTag = (sessionId, tag) =>
 export const markSessionRead = (sessionId) =>
   request('POST', `/sessions/${sessionId}/read`);
 
+export const deleteSession = (sessionId) =>
+  request('DELETE', `/sessions/${sessionId}`);
+
 // Manager status
 export const getManagerStatus = () =>
   request('GET', '/manager-status');
@@ -143,3 +146,7 @@ export const saveSettings = (data) =>
 
 export const testNotification = () =>
   request('POST', '/settings/test-notification');
+
+// Karabas sync
+export const syncKarabas = () =>
+  request('POST', '/api/sync-karabas');

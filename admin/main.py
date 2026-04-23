@@ -10,7 +10,8 @@ import asyncpg
 import httpx
 import asyncio
 import json
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 
 REACT_DIST = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "admin-react", "dist"))
 REACT_INDEX = os.path.join(REACT_DIST, "index.html")
@@ -30,6 +31,7 @@ from db.chat import (
     set_session_status,
     set_session_tag,
     mark_session_read,
+    delete_session,
     get_quick_replies,
     create_quick_reply,
     delete_quick_reply,
@@ -366,11 +368,36 @@ async def settings_save(
 
 # ── Menu Buttons ──────────────────────────────────────────────────────────
 
+_sched_logger = logging.getLogger("karabas.scheduler")
+
+
+async def _nightly_karabas_loop():
+    """Run Karabas scrape every night at 00:00 local time."""
+    while True:
+        try:
+            now = datetime.now()
+            tomorrow_midnight = (now + timedelta(days=1)).replace(
+                hour=0, minute=0, second=10, microsecond=0
+            )
+            sleep_secs = (tomorrow_midnight - now).total_seconds()
+            _sched_logger.info("Next Karabas scrape in %.1fh", sleep_secs / 3600)
+            await asyncio.sleep(sleep_secs)
+            _sched_logger.info("Starting nightly Karabas scrape…")
+            stats = await karabas_scrape_all()
+            _sched_logger.info("Nightly scrape done: %s", stats)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            _sched_logger.exception("Nightly Karabas scrape failed")
+            await asyncio.sleep(3600)  # retry in 1h on error
+
+
 @app.on_event("startup")
 async def on_startup():
     await init_menu_buttons()
     await init_chat_tables()
     await init_content_tables()
+    asyncio.create_task(_nightly_karabas_loop())
     # Ensure new lead columns exist (safe migration)
     try:
         db = await get_db()
@@ -508,6 +535,18 @@ async def buttons_delete(request: Request, btn_id: int):
 
 
 # ── Karabas sync ──────────────────────────────────────────────────────────
+
+@app.post("/api/sync-karabas")
+async def api_sync_karabas(request: Request):
+    """JSON endpoint: manually trigger Karabas scrape."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        stats = await karabas_scrape_all()
+        return JSONResponse({"ok": True, "new": stats.get("new", 0), "updated": stats.get("updated", 0), "total_active": stats.get("total_active", 0)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
 
 @app.post("/sync-events")
 async def sync_events(request: Request):
@@ -765,6 +804,14 @@ async def api_mark_read(request: Request, session_id: int):
     return JSONResponse({"ok": True})
 
 
+@app.delete("/api/sessions/{session_id}")
+async def api_delete_session(request: Request, session_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_session(session_id)
+    return JSONResponse({"ok": True})
+
+
 # ── Manager online status ──────────────────────────────────────────────────
 
 @app.get("/api/manager-status")
@@ -936,6 +983,18 @@ async def api_analytics(request: Request):
     except Exception:
         pass
 
+    # Leads by category
+    leads_by_cat = []
+    try:
+        cat_rows = await db.fetch("""
+            SELECT COALESCE(category, 'Інше') as category, COUNT(*) as cnt
+            FROM bot_leads
+            GROUP BY category ORDER BY cnt DESC LIMIT 10
+        """)
+        leads_by_cat = [{"category": r["category"], "count": int(r["cnt"])} for r in cat_rows]
+    except Exception:
+        pass
+
     await db.close()
 
     def rows_to_chart(rows):
@@ -943,6 +1002,8 @@ async def api_analytics(request: Request):
             "labels": [str(r["day"]) for r in rows],
             "values": [int(r["cnt"]) for r in rows],
         }
+
+    conversion = round((leads_total / total_dialogs * 100), 1) if total_dialogs > 0 else 0
 
     return JSONResponse({
         "users": {
@@ -966,6 +1027,8 @@ async def api_analytics(request: Request):
         },
         "handoffs": int(handoffs),
         "events_active": int(events_count),
+        "conversion": conversion,
+        "leads_by_category": leads_by_cat,
         "charts": {
             "daily_users": rows_to_chart(daily_users),
             "daily_msgs": rows_to_chart(daily_msgs),
