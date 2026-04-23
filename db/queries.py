@@ -34,8 +34,10 @@ class EventResult:
     photo_url: Optional[str]
 
 
-def _media_url(media_id: int, file_name: str) -> str:
-    return f"{settings.MEDIA_BASE_URL}/storage/{media_id}/{file_name}"
+def _media_url(uuid_str: str, name: str) -> str:
+    """Build Spatie MediaLibrary URL: /storage/other/{uuid[0:2]}/{uuid[2:4]}/conversions/{name}-feed.webp"""
+    clean = uuid_str.replace("-", "")
+    return f"{settings.MEDIA_BASE_URL}/storage/other/{clean[0:2]}/{clean[2:4]}/conversions/{name}-feed.webp"
 
 
 async def search_products(
@@ -77,13 +79,13 @@ async def search_products(
             COALESCE(g.name_ua, '') as city,
             p.price, p.phone, p.instagram, p.website, p.telegram,
             p.is_top, p.is_recommended,
-            m.id as media_id, m.file_name
+            m.uuid, m.name as media_name
         FROM products p
         LEFT JOIN categories c ON c.id = p.category_id
         LEFT JOIN geo_cities g ON g.id = p.city_id
         LEFT JOIN LATERAL (
-            SELECT id, file_name FROM media
-            WHERE model_id = p.id AND model_type LIKE '%Product%'
+            SELECT uuid::text, name FROM media
+            WHERE model_id = p.id AND model_type = 'product'
             ORDER BY id LIMIT 1
         ) m ON true
         WHERE {where_sql}
@@ -96,7 +98,7 @@ async def search_products(
 
     results = []
     for r in rows:
-        photo = _media_url(r["media_id"], r["file_name"]) if r["media_id"] else None
+        photo = _media_url(r["uuid"], r["media_name"]) if r["uuid"] else None
         results.append(ProductResult(
             id=r["id"],
             name=r["name"],
