@@ -111,6 +111,22 @@ export const deleteEvent = (id) =>
 export const toggleEvent = (id, published) =>
   request('POST', `/content/events/${id}/toggle`, { is_published: published });
 
+// Buttons
+export const getButtons = () =>
+  request('GET', '/buttons');
+
+export const createButton = (data) =>
+  request('POST', '/buttons', data);
+
+export const updateButton = (id, data) =>
+  request('PUT', `/buttons/${id}`, data);
+
+export const deleteButton = (id) =>
+  request('DELETE', `/buttons/${id}`);
+
+export const toggleButton = (id) =>
+  request('POST', `/buttons/${id}/toggle`);
+
 // Prompt
 export const getPrompt = () =>
   request('GET', '/prompt');
