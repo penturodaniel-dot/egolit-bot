@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Egolist — Кнопки меню</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; }
+
+  .header { background: #1d1d1f; color: white; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+  .header h1 { font-size: 20px; font-weight: 600; }
+  .header a { color: #aaa; text-decoration: none; font-size: 13px; }
+  .header a:hover { color: white; }
+  .header a.active { color: white; font-weight: 600; }
+  .header .sep { color: #444; }
+
+  .container { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+
+  .alert { border-radius: 10px; padding: 12px 16px; font-size: 13px; margin-bottom: 20px; }
+  .alert-success { background: #f0fff4; color: #1a7a3a; border: 1px solid #b7ebc8; }
+  .alert-error   { background: #fff1f0; color: #c0392b; border: 1px solid #fbc3bb; }
+
+  /* ── Button list ── */
+  .section-title { font-size: 17px; font-weight: 600; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; }
+  .btn-add { background: #007aff; color: white; border: none; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .btn-add:hover { background: #0066d6; }
+
+  .btn-list { background: white; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.08); overflow: hidden; margin-bottom: 32px; }
+  .btn-item { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid #f0f0f0; }
+  .btn-item:last-child { border-bottom: none; }
+  .btn-item.child { background: #fafafa; padding-left: 40px; }
+  .btn-item.inactive { opacity: 0.45; }
+
+  .btn-drag { color: #ccc; font-size: 16px; cursor: grab; }
+  .btn-emoji { font-size: 22px; min-width: 32px; text-align: center; }
+  .btn-info { flex: 1; min-width: 0; }
+  .btn-label { font-weight: 600; font-size: 14px; }
+  .btn-meta { font-size: 12px; color: #86868b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; margin-right: 4px; }
+  .badge-ai      { background: #e8f4ff; color: #0066cc; }
+  .badge-sub     { background: #fff3e0; color: #e65100; }
+  .badge-lead    { background: #e8f5e9; color: #2e7d32; }
+  .badge-manager { background: #f3e5f5; color: #6a1b9a; }
+  .badge-query   { background: #e3f2fd; color: #1565c0; }
+
+  .btn-actions { display: flex; gap: 6px; align-items: center; }
+  .act-btn { padding: 5px 12px; border: 1px solid #d2d2d7; border-radius: 7px; font-size: 12px; cursor: pointer; background: white; text-decoration: none; color: #1d1d1f; }
+  .act-btn:hover { background: #f5f5f7; }
+  .act-btn.danger { border-color: #ff3b30; color: #ff3b30; }
+  .act-btn.danger:hover { background: #fff1f0; }
+  .act-btn.toggle-off { border-color: #ccc; color: #aaa; }
+
+  .child-header { padding: 8px 20px 4px 40px; font-size: 11px; font-weight: 600; color: #86868b; text-transform: uppercase; letter-spacing: .5px; background: #f5f5f7; border-bottom: 1px solid #eee; }
+
+  /* ── Modal / Form ── */
+  .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; }
+  .modal { background: white; border-radius: 16px; padding: 28px 32px; width: 100%; max-width: 520px; box-shadow: 0 8px 40px rgba(0,0,0,.2); }
+  .modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+
+  label { display: block; font-size: 13px; font-weight: 600; color: #3a3a3c; margin-bottom: 5px; margin-top: 14px; }
+  label:first-of-type { margin-top: 0; }
+  input[type=text], select, textarea {
+    width: 100%; padding: 10px 13px; border: 1.5px solid #d2d2d7;
+    border-radius: 9px; font-size: 14px; outline: none; transition: border-color .2s;
+    font-family: inherit;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #007aff; }
+  textarea { resize: vertical; min-height: 80px; }
+
+  .prompt-row { display: none; }
+  .prompt-row.visible { display: block; }
+
+  .form-row { display: flex; gap: 12px; }
+  .form-row > * { flex: 1; }
+
+  .modal-actions { display: flex; gap: 10px; margin-top: 22px; justify-content: flex-end; }
+  .btn-save   { background: #1d1d1f; color: white; border: none; border-radius: 9px; padding: 11px 24px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn-save:hover { background: #3a3a3c; }
+  .btn-cancel { background: #f5f5f7; color: #1d1d1f; border: 1px solid #d2d2d7; border-radius: 9px; padding: 11px 24px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn-cancel:hover { background: #eee; }
+
+  .hint { font-size: 12px; color: #86868b; margin-top: 4px; }
+  .empty-state { text-align: center; padding: 40px; color: #86868b; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Egolist</h1>
+  <span class="sep">/</span>
+  <a href="/">Заявки</a>
+  <span class="sep">/</span>
+  <a href="/buttons" class="active">Кнопки меню</a>
+  <span class="sep">/</span>
+  <a href="/settings">Налаштування</a>
+  <a href="/logout" style="margin-left:auto;">Вийти →</a>
+</div>
+
+<div class="container">
+
+  {% if msg %}
+  <div class="alert alert-{{ msg_type }}">{{ msg }}</div>
+  {% endif %}
+
+  <div class="section-title">
+    Кнопки головного меню
+    <button class="btn-add" onclick="openAdd(null)">+ Додати кнопку</button>
+  </div>
+
+  <div class="btn-list">
+    {% if not root_buttons %}
+    <div class="empty-state">Кнопок ще немає. Натисни "+ Додати кнопку".</div>
+    {% endif %}
+
+    {% for btn in root_buttons %}
+    <div class="btn-item {% if not btn.is_active %}inactive{% endif %}">
+      <span class="btn-emoji">{{ btn.emoji or '☐' }}</span>
+      <div class="btn-info">
+        <div class="btn-label">{{ btn.label }}</div>
+        <div class="btn-meta">
+          {% if btn.action_type == 'ai_search' %}
+            <span class="badge badge-ai">AI пошук</span> {{ btn.ai_prompt[:60] if btn.ai_prompt else '—' }}{% if btn.ai_prompt and btn.ai_prompt|length > 60 %}…{% endif %}
+          {% elif btn.action_type == 'submenu' %}
+            <span class="badge badge-sub">Підменю</span> {{ children[btn.id]|length }} кнопок
+          {% elif btn.action_type == 'lead_form' %}
+            <span class="badge badge-lead">Форма заявки</span>
+          {% elif btn.action_type == 'manager' %}
+            <span class="badge badge-manager">Менеджер</span>
+          {% elif btn.action_type == 'custom_query' %}
+            <span class="badge badge-query">Вільний запит</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="btn-actions">
+        {% if btn.action_type == 'submenu' %}
+        <button class="act-btn" onclick="openAdd({{ btn.id }})">+ Підкнопка</button>
+        {% endif %}
+        <button class="act-btn" onclick="openEdit({{ btn.id }}, '{{ btn.parent_id or '' }}', {{ btn.label|tojson }}, {{ btn.emoji|tojson }}, '{{ btn.action_type }}', {{ btn.ai_prompt|tojson if btn.ai_prompt else 'null' }}, {{ btn.position }})">Ред.</button>
+        <form method="post" action="/buttons/{{ btn.id }}/toggle" style="display:inline">
+          <button type="submit" class="act-btn {% if not btn.is_active %}toggle-off{% endif %}">
+            {{ '✓ Вкл' if btn.is_active else '○ Викл' }}
+          </button>
+        </form>
+        <form method="post" action="/buttons/{{ btn.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Видалити кнопку «{{ btn.label }}»?{% if btn.action_type == 'submenu' %} Разом з усіма підкнопками!{% endif %}')">
+          <button type="submit" class="act-btn danger">✕</button>
+        </form>
+      </div>
+    </div>
+
+    {# Children of this button #}
+    {% if btn.action_type == 'submenu' and children[btn.id] %}
+    <div class="child-header">Підменю: {{ btn.emoji }} {{ btn.label }}</div>
+    {% for child in children[btn.id] %}
+    <div class="btn-item child {% if not child.is_active %}inactive{% endif %}">
+      <span class="btn-emoji">{{ child.emoji or '☐' }}</span>
+      <div class="btn-info">
+        <div class="btn-label">{{ child.label }}</div>
+        <div class="btn-meta">
+          {% if child.action_type == 'ai_search' %}
+            <span class="badge badge-ai">AI пошук</span> {{ child.ai_prompt[:60] if child.ai_prompt else '—' }}{% if child.ai_prompt and child.ai_prompt|length > 60 %}…{% endif %}
+          {% elif child.action_type == 'lead_form' %}
+            <span class="badge badge-lead">Форма заявки</span>
+          {% elif child.action_type == 'manager' %}
+            <span class="badge badge-manager">Менеджер</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="btn-actions">
+        <button class="act-btn" onclick="openEdit({{ child.id }}, '{{ child.parent_id }}', {{ child.label|tojson }}, {{ child.emoji|tojson }}, '{{ child.action_type }}', {{ child.ai_prompt|tojson if child.ai_prompt else 'null' }}, {{ child.position }})">Ред.</button>
+        <form method="post" action="/buttons/{{ child.id }}/toggle" style="display:inline">
+          <button type="submit" class="act-btn {% if not child.is_active %}toggle-off{% endif %}">
+            {{ '✓ Вкл' if child.is_active else '○ Викл' }}
+          </button>
+        </form>
+        <form method="post" action="/buttons/{{ child.id }}/delete" style="display:inline"
+              onsubmit="return confirm('Видалити кнопку «{{ child.label }}»?')">
+          <button type="submit" class="act-btn danger">✕</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% endfor %}
+  </div>
+
+</div>
+
+<!-- ── Add / Edit Modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modal">
+  <div class="modal">
+    <h3 id="modal-title">Додати кнопку</h3>
+    <form method="post" id="modal-form" action="/buttons/add">
+
+      <input type="hidden" name="btn_id" id="f-id" value="">
+
+      <label>Батьківська кнопка</label>
+      <select name="parent_id" id="f-parent">
+        <option value="">— Головне меню (без підменю) —</option>
+        {% for btn in root_buttons %}
+        {% if btn.action_type == 'submenu' %}
+        <option value="{{ btn.id }}">{{ btn.emoji }} {{ btn.label }}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+      <div class="hint">Оберіть підменю, якщо кнопка має бути вкладеною.</div>
+
+      <div class="form-row" style="margin-top:14px">
+        <div>
+          <label>Емодзі</label>
+          <input type="text" name="emoji" id="f-emoji" placeholder="🎂" maxlength="4">
+        </div>
+        <div>
+          <label>Позиція</label>
+          <input type="text" name="position" id="f-position" placeholder="0" value="0">
+        </div>
+      </div>
+
+      <label>Назва кнопки</label>
+      <input type="text" name="label" id="f-label" placeholder="День народження під ключ" required>
+
+      <label>Тип дії</label>
+      <select name="action_type" id="f-action" onchange="onActionChange(this.value)">
+        <option value="ai_search">🤖 AI пошук — запустити пошук по промту</option>
+        <option value="submenu">📂 Підменю — показати вкладені кнопки</option>
+        <option value="lead_form">📝 Форма заявки — зібрати контакти</option>
+        <option value="manager">👨‍💼 Менеджер — підключити живий чат</option>
+        <option value="custom_query">✍️ Вільний запит — попросити написати запит</option>
+      </select>
+
+      <div class="prompt-row" id="prompt-row">
+        <label>Промт для AI</label>
+        <textarea name="ai_prompt" id="f-prompt"
+          placeholder="Знайди послуги для організації дня народження у Дніпрі: ресторани, аніматори, декор, торти. Покажи варіанти з цінами."></textarea>
+        <div class="hint">Точна інструкція що шукати коли юзер натисне кнопку. Пиши як запит — ChatGPT отримає саме цей текст.</div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" onclick="closeModal()">Скасувати</button>
+        <button type="submit" class="btn-save" id="modal-submit">Зберегти</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+const modal = document.getElementById('modal');
+
+function openAdd(parentId) {
+  document.getElementById('modal-title').textContent = 'Додати кнопку';
+  document.getElementById('modal-submit').textContent = 'Додати';
+  document.getElementById('modal-form').action = '/buttons/add';
+  document.getElementById('f-id').value = '';
+  document.getElementById('f-parent').value = parentId || '';
+  document.getElementById('f-emoji').value = '';
+  document.getElementById('f-label').value = '';
+  document.getElementById('f-action').value = 'ai_search';
+  document.getElementById('f-prompt').value = '';
+  document.getElementById('f-position').value = '0';
+  onActionChange('ai_search');
+  modal.classList.add('open');
+}
+
+function openEdit(id, parentId, label, emoji, actionType, aiPrompt, position) {
+  document.getElementById('modal-title').textContent = 'Редагувати кнопку';
+  document.getElementById('modal-submit').textContent = 'Зберегти';
+  document.getElementById('modal-form').action = '/buttons/' + id + '/edit';
+  document.getElementById('f-id').value = id;
+  document.getElementById('f-parent').value = parentId || '';
+  document.getElementById('f-emoji').value = emoji || '';
+  document.getElementById('f-label').value = label || '';
+  document.getElementById('f-action').value = actionType || 'ai_search';
+  document.getElementById('f-prompt').value = aiPrompt || '';
+  document.getElementById('f-position').value = position || 0;
+  onActionChange(actionType || 'ai_search');
+  modal.classList.add('open');
+}
+
+function closeModal() {
+  modal.classList.remove('open');
+}
+
+function onActionChange(val) {
+  const row = document.getElementById('prompt-row');
+  row.classList.toggle('visible', val === 'ai_search');
+}
+
+// Close on overlay click
+modal.addEventListener('click', function(e) {
+  if (e.target === modal) closeModal();
+});
+</script>
+</body>
+</html>

@@ -11,8 +11,10 @@ from db.connection import get_pool, close_pool
 from db.categories_cache import load_categories
 from db.human_sessions import init_human_sessions
 from db.settings import init_settings
+from db.menu_buttons import init_menu_buttons
+from bot.menu_cache import reload_buttons
 from bot.handlers import start, search, lead
-from bot.handlers import human
+from bot.handlers import human, dynamic_menu
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,10 +28,11 @@ dp = Dispatcher(storage=MemoryStorage())
 # Реєструємо роутери
 # human.router — ПЕРШИМ, щоб перехоплювати повідомлення юзерів у human-mode
 # та обробляти reply від менеджера до того, як search/lead роутери їх побачать
-dp.include_router(human.router)
-dp.include_router(start.router)
-dp.include_router(lead.router)
-dp.include_router(search.router)   # search останній — ловить весь вільний текст
+dp.include_router(human.router)         # 1. перехоплює human-mode повідомлення
+dp.include_router(start.router)         # 2. /start команда
+dp.include_router(lead.router)          # 3. lead flow стани
+dp.include_router(dynamic_menu.router)  # 4. кнопки меню (до search!)
+dp.include_router(search.router)        # 5. вільний текст — останній
 
 
 async def on_startup():
@@ -42,6 +45,10 @@ async def on_startup():
     logger.info("Human sessions table ready.")
     await init_settings()
     logger.info("Settings table ready.")
+    await init_menu_buttons()
+    logger.info("Menu buttons table ready.")
+    await reload_buttons()
+    logger.info("Menu buttons loaded.")
     me = await bot.get_me()
     logger.info(f"Bot started: @{me.username}")
 

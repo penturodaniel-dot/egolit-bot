@@ -1,19 +1,6 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 
-def main_menu_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🌆 Куди піти сьогодні"),    KeyboardButton(text="📅 Події на вихідні")],
-            [KeyboardButton(text="💑 Ідея для побачення"),     KeyboardButton(text="👨‍👩‍👧 Куди з дітьми")],
-            [KeyboardButton(text="🍻 Відпочити з друзями"),    KeyboardButton(text="🚗 Куди поїхати недалеко")],
-            [KeyboardButton(text="✍️ Свій запит")],
-            [KeyboardButton(text="📞 Поговорити з менеджером")],
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Або напишіть запит вільно...",
-    )
-
 
 def results_keyboard(has_more: bool = True) -> InlineKeyboardMarkup:
     buttons = []

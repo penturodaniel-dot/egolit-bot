@@ -2,9 +2,15 @@ from fastapi import FastAPI, Request, Form, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from typing import Optional
 import asyncpg
 import httpx
 from config import settings
+from db.menu_buttons import (
+    load_all_buttons, get_button,
+    create_button, update_button, toggle_button, delete_button,
+    init_menu_buttons,
+)
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=settings.ADMIN_SECRET_KEY)
@@ -224,6 +230,91 @@ async def settings_save(
 
     await db.close()
     return RedirectResponse("/settings", status_code=303)
+
+
+# ── Menu Buttons ──────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+async def on_startup():
+    await init_menu_buttons()
+
+
+@app.get("/buttons", response_class=HTMLResponse)
+async def buttons_page(request: Request, msg: str = "", msg_type: str = "info"):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+
+    all_buttons = await load_all_buttons()
+    root_buttons = [b for b in all_buttons if b.parent_id is None]
+    children: dict[int, list] = {}
+    for b in all_buttons:
+        if b.parent_id is not None:
+            children.setdefault(b.parent_id, []).append(b)
+
+    return templates.TemplateResponse("buttons.html", {
+        "request": request,
+        "root_buttons": root_buttons,
+        "children": children,
+        "msg": msg,
+        "msg_type": msg_type,
+    })
+
+
+@app.post("/buttons/add")
+async def buttons_add(
+    request: Request,
+    label: str = Form(...),
+    emoji: str = Form(""),
+    action_type: str = Form("ai_search"),
+    ai_prompt: str = Form(""),
+    parent_id: str = Form(""),
+    position: str = Form("0"),
+):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+
+    pid = int(parent_id) if parent_id.strip() else None
+    pos = int(position) if position.strip().isdigit() else 0
+    await create_button(label.strip(), emoji.strip(), action_type,
+                        ai_prompt.strip() or None, pid, pos)
+    return RedirectResponse("/buttons?msg=Кнопку+додано&msg_type=success", status_code=303)
+
+
+@app.post("/buttons/{btn_id}/edit")
+async def buttons_edit(
+    request: Request,
+    btn_id: int,
+    label: str = Form(...),
+    emoji: str = Form(""),
+    action_type: str = Form("ai_search"),
+    ai_prompt: str = Form(""),
+    parent_id: str = Form(""),
+    position: str = Form("0"),
+):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+
+    pid = int(parent_id) if parent_id.strip() else None
+    pos = int(position) if position.strip().isdigit() else 0
+    await update_button(btn_id, label.strip(), emoji.strip(), action_type,
+                        ai_prompt.strip() or None, pid, pos)
+    return RedirectResponse("/buttons?msg=Кнопку+збережено&msg_type=success", status_code=303)
+
+
+@app.post("/buttons/{btn_id}/toggle")
+async def buttons_toggle(request: Request, btn_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await toggle_button(btn_id)
+    return RedirectResponse("/buttons", status_code=303)
+
+
+@app.post("/buttons/{btn_id}/delete")
+async def buttons_delete(request: Request, btn_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await delete_button(btn_id)
+    return RedirectResponse("/buttons?msg=Кнопку+видалено&msg_type=success", status_code=303)
 
 
 @app.post("/lead/{lead_id}/status")
