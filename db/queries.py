@@ -74,9 +74,16 @@ async def search_products(
         idx += 1
 
     if search_text:
-        where_parts.append(f"(p.name ILIKE ${idx} OR p.description ILIKE ${idx})")
-        params.append(f"%{search_text}%")
-        idx += 1
+        words = [w for w in search_text.split() if len(w) >= 3]
+        if not words:
+            words = [search_text]
+        word_conds = " OR ".join(
+            f"(p.name ILIKE ${idx + i} OR p.description ILIKE ${idx + i})"
+            for i in range(len(words))
+        )
+        where_parts.append(f"({word_conds})")
+        params.extend(f"%{w}%" for w in words)
+        idx += len(words)
 
     where_sql = " AND ".join(where_parts)
 
@@ -199,8 +206,14 @@ async def search_karabas_events(
         params.append(category)
 
     if search_text:
-        where.append(f"title ILIKE ${len(params)+1}")
-        params.append(f"%{search_text}%")
+        words = [w for w in search_text.split() if len(w) >= 3]
+        if not words:
+            words = [search_text]
+        word_conds = " OR ".join(
+            f"title ILIKE ${len(params)+i+1}" for i in range(len(words))
+        )
+        where.append(f"({word_conds})")
+        params.extend(f"%{w}%" for w in words)
 
     where_sql = " AND ".join(where)
     params += [limit, offset]
