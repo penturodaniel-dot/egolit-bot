@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Node — don't send node_modules to Docker (it's installed in the Dockerfile)
+admin-react/node_modules/
+
+# Secrets
+.env
+*.env
+.env.*
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Design mockups (not needed in Docker)
+design/
+
+# Git
+.git/
+.gitignore

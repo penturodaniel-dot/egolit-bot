@@ -1,6 +1,9 @@
+import os
 from fastapi import FastAPI, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from typing import Optional
 import asyncpg
@@ -8,6 +11,9 @@ import httpx
 import asyncio
 import json
 from datetime import datetime
+
+REACT_DIST = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "admin-react", "dist"))
+REACT_INDEX = os.path.join(REACT_DIST, "index.html")
 from config import settings
 from db.content import (
     init_content_tables,
@@ -38,7 +44,24 @@ from db.menu_buttons import (
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=settings.ADMIN_SECRET_KEY)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 templates = Jinja2Templates(directory="admin/templates")
+
+
+def _spa():
+    """Serve the React SPA index.html (built dist). Falls back to 503 if not built."""
+    if os.path.exists(REACT_INDEX):
+        return FileResponse(REACT_INDEX)
+    return JSONResponse(
+        {"error": "Frontend not built. Run: cd admin-react && npm install && npm run build"},
+        status_code=503,
+    )
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────
@@ -70,10 +93,7 @@ async def get_db():
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = ""):
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "error": error,
-    })
+    return _spa()
 
 
 @app.post("/login")
@@ -94,15 +114,46 @@ async def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+# ── Auth JSON API (for React SPA) ─────────────────────────────────────────
+
+@app.post("/api/auth/login")
+async def api_auth_login(request: Request):
+    body = await request.json()
+    username = (body.get("username") or "").strip()
+    password = (body.get("password") or "").strip()
+    if username == settings.ADMIN_LOGIN and password == settings.ADMIN_PASSWORD:
+        request.session["authenticated"] = True
+        return JSONResponse({"ok": True, "username": username})
+    return JSONResponse({"error": "Невірний логін або пароль"}, status_code=401)
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request):
+    if request.session.get("authenticated"):
+        return JSONResponse({"authenticated": True, "username": settings.ADMIN_LOGIN})
+    return JSONResponse({"authenticated": False}, status_code=401)
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(request: Request):
+    request.session.clear()
+    return JSONResponse({"ok": True})
+
+
 # ── Main page ─────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    return _spa()
+
+
+# ── Leads JSON API ─────────────────────────────────────────────────────────
+
+@app.get("/api/leads")
+async def api_get_leads(request: Request):
     if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
-
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     db = await get_db()
-
     leads = await db.fetch("""
         SELECT id, created_at, name, phone, username, details, status, manager_note,
                COALESCE(category, '') AS category,
@@ -112,7 +163,6 @@ async def index(request: Request):
         FROM bot_leads
         ORDER BY created_at DESC
     """)
-
     stats = await db.fetchrow("""
         SELECT
             COUNT(*) FILTER (WHERE status = 'new')      AS new_count,
@@ -121,20 +171,25 @@ async def index(request: Request):
             COUNT(*)                                     AS total_count
         FROM bot_leads
     """)
-
-    human_sessions = await db.fetch("""
-        SELECT user_id, username, first_name, started_at
-        FROM human_sessions
-        ORDER BY started_at DESC
-    """) if await _table_exists(db, "human_sessions") else []
-
     await db.close()
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "leads": leads,
-        "stats": stats,
-        "human_sessions": human_sessions,
-    })
+    leads_list = []
+    for r in leads:
+        leads_list.append({
+            "id": r["id"],
+            "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+            "name": r["name"],
+            "phone": r["phone"],
+            "username": r["username"],
+            "details": r["details"],
+            "status": r["status"],
+            "manager_note": r["manager_note"],
+            "category": r["category"],
+            "budget": r["budget"],
+            "event_date": r["date_needed"],   # frontend uses event_date
+            "people_count": r["people_count"],
+        })
+    # Return plain array — Leads page computes stats itself
+    return JSONResponse(leads_list)
 
 
 @app.post("/human-session/{user_id}/end")
@@ -188,17 +243,66 @@ async def _upsert_setting(db, key: str, value: str) -> None:
 
 @app.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request, msg: str = "", msg_type: str = "info"):
+    return _spa()
+
+
+# ── Settings JSON API ──────────────────────────────────────────────────────
+
+@app.get("/api/settings")
+async def api_get_settings(request: Request):
     if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     db = await get_db()
     s = await _get_all_settings(db)
     await db.close()
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
-        "settings": s,
-        "msg": msg,
-        "msg_type": msg_type,
-    })
+    return JSONResponse(s)
+
+
+@app.post("/api/settings")
+async def api_save_settings(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    db = await get_db()
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_settings (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    chat_id = (body.get("notification_chat_id") or "").strip()
+    enabled = body.get("notification_enabled", True)
+    await _upsert_setting(db, "notification_chat_id", chat_id)
+    await _upsert_setting(db, "notification_enabled", "1" if enabled else "0")
+    await db.close()
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/settings/test-notification")
+async def api_test_notification(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    db = await get_db()
+    s = await _get_all_settings(db)
+    await db.close()
+    chat_id = s.get("notification_chat_id", "")
+    if not chat_id:
+        return JSONResponse({"error": "Спочатку вкажи Chat ID"}, status_code=400)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": "✅ <b>Тест сповіщень</b>\n\nЦей канал налаштований для отримання заявок від Egolist бота.",
+                    "parse_mode": "HTML",
+                },
+            )
+        if resp.status_code == 200:
+            return JSONResponse({"ok": True})
+        detail = resp.json().get("description", "невідома помилка")
+        return JSONResponse({"error": f"Помилка Telegram: {detail}"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.post("/settings")
@@ -282,23 +386,68 @@ async def on_startup():
 
 @app.get("/buttons", response_class=HTMLResponse)
 async def buttons_page(request: Request, msg: str = "", msg_type: str = "info"):
+    return _spa()
+
+
+# ── Buttons JSON API ───────────────────────────────────────────────────────
+
+@app.get("/api/buttons")
+async def api_get_buttons(request: Request):
     if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
-
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     all_buttons = await load_all_buttons()
-    root_buttons = [b for b in all_buttons if b.parent_id is None]
-    children: dict[int, list] = {}
-    for b in all_buttons:
-        if b.parent_id is not None:
-            children.setdefault(b.parent_id, []).append(b)
+    def btn_to_dict(b):
+        return {
+            "id": b.id, "label": b.label, "emoji": b.emoji or "",
+            "action_type": b.action_type, "ai_prompt": b.ai_prompt or "",
+            "parent_id": b.parent_id, "position": b.position, "is_active": b.is_active,
+        }
+    return JSONResponse([btn_to_dict(b) for b in all_buttons])
 
-    return templates.TemplateResponse("buttons.html", {
-        "request": request,
-        "root_buttons": root_buttons,
-        "children": children,
-        "msg": msg,
-        "msg_type": msg_type,
-    })
+
+@app.post("/api/buttons")
+async def api_create_button(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    label = (body.get("label") or "").strip()
+    if not label:
+        return JSONResponse({"error": "label required"}, status_code=400)
+    await create_button(
+        label, body.get("emoji", "").strip(), body.get("action_type", "ai_search"),
+        body.get("ai_prompt", "").strip() or None,
+        body.get("parent_id"), int(body.get("position", 0)),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.put("/api/buttons/{btn_id}")
+async def api_update_button(request: Request, btn_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    await update_button(
+        btn_id, body.get("label", "").strip(), body.get("emoji", "").strip(),
+        body.get("action_type", "ai_search"), body.get("ai_prompt", "").strip() or None,
+        body.get("parent_id"), int(body.get("position", 0)),
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/buttons/{btn_id}/toggle")
+async def api_toggle_button(request: Request, btn_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await toggle_button(btn_id)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/buttons/{btn_id}")
+async def api_delete_button(request: Request, btn_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_button(btn_id)
+    return JSONResponse({"ok": True})
 
 
 @app.post("/buttons/add")
@@ -386,8 +535,15 @@ async def sync_events(request: Request):
 
 @app.get("/prompt", response_class=HTMLResponse)
 async def prompt_page(request: Request, msg: str = "", msg_type: str = "info"):
+    return _spa()
+
+
+# ── Prompt JSON API ────────────────────────────────────────────────────────
+
+@app.get("/api/prompt")
+async def api_get_prompt(request: Request):
     if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     db = await get_db()
     await db.execute("""
         CREATE TABLE IF NOT EXISTS admin_settings (
@@ -396,13 +552,22 @@ async def prompt_page(request: Request, msg: str = "", msg_type: str = "info"):
     """)
     row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'ai_prompt_extra'")
     await db.close()
-    current = row["value"] if row else ""
-    return templates.TemplateResponse("prompt.html", {
-        "request": request,
-        "current_prompt": current,
-        "msg": msg,
-        "msg_type": msg_type,
-    })
+    return JSONResponse({"ai_prompt_extra": row["value"] if row else ""})
+
+
+@app.post("/api/prompt")
+async def api_save_prompt(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    text = (body.get("ai_prompt_extra") or "").strip()
+    db = await get_db()
+    await db.execute("""
+        INSERT INTO admin_settings (key, value) VALUES ('ai_prompt_extra', $1)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """, text)
+    await db.close()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/prompt")
@@ -419,6 +584,24 @@ async def prompt_save(
     """, ai_prompt_extra.strip())
     await db.close()
     return RedirectResponse("/prompt?msg=Збережено&msg_type=success", status_code=303)
+
+
+@app.post("/api/leads/{lead_id}/status")
+async def api_update_lead_status(request: Request, lead_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    status = body.get("status", "new")
+    note = (body.get("note") or "").strip()
+    if status not in ("new", "in_work", "done"):
+        return JSONResponse({"error": "invalid status"}, status_code=400)
+    db = await get_db()
+    await db.execute(
+        "UPDATE bot_leads SET status=$1, manager_note=$2 WHERE id=$3",
+        status, note, lead_id,
+    )
+    await db.close()
+    return JSONResponse({"ok": True})
 
 
 @app.post("/lead/{lead_id}/status")
@@ -465,9 +648,7 @@ def _msg_to_dict(m: dict) -> dict:
 
 @app.get("/chats", response_class=HTMLResponse)
 async def chats_page(request: Request):
-    if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse("chats.html", {"request": request})
+    return _spa()
 
 
 # ── Chat JSON API ──────────────────────────────────────────────────────────
@@ -656,9 +837,7 @@ async def api_update_quick_reply(request: Request, reply_id: int):
 
 @app.get("/analytics", response_class=HTMLResponse)
 async def analytics_page(request: Request):
-    if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
-    return templates.TemplateResponse("analytics.html", {"request": request})
+    return _spa()
 
 
 @app.get("/api/analytics")
@@ -788,18 +967,187 @@ async def api_analytics(request: Request):
 
 @app.get("/content", response_class=HTMLResponse)
 async def content_page(request: Request, tab: str = "places", msg: str = "", msg_type: str = "success"):
+    return _spa()
+
+
+# ── Content JSON API ───────────────────────────────────────────────────────
+
+def _serialize_record(r) -> dict:
+    """Convert asyncpg Record to JSON-serializable dict."""
+    out = {}
+    for k in r.keys():
+        v = r[k]
+        if hasattr(v, 'isoformat'):
+            out[k] = v.isoformat()
+        elif isinstance(v, bool):
+            out[k] = v
+        else:
+            out[k] = v
+    return out
+
+
+@app.get("/api/content/places")
+async def api_get_places(request: Request):
     if not request.session.get("authenticated"):
-        return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     places = await get_all_places()
+    return JSONResponse([_serialize_record(p) for p in places])
+
+
+@app.post("/api/content/places")
+async def api_create_place(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    if not (body.get("name") or "").strip():
+        return JSONResponse({"error": "name required"}, status_code=400)
+    data = {
+        "name": body.get("name", "").strip(),
+        "category": body.get("category", "").strip(),
+        "description": body.get("description", "").strip(),
+        "district": body.get("district", "").strip(),
+        "address": body.get("address", "").strip(),
+        "price_from": body.get("price_from") or None,
+        "price_to": body.get("price_to") or None,
+        "for_who": body.get("for_who", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "phone": body.get("phone", "").strip(),
+        "instagram": body.get("instagram", "").strip(),
+        "website": body.get("website", "").strip(),
+        "telegram": body.get("telegram", "").strip(),
+        "booking_url": body.get("booking_url", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": str(body.get("priority", "0")),
+    }
+    await create_place(data)
+    return JSONResponse({"ok": True})
+
+
+@app.put("/api/content/places/{place_id}")
+async def api_update_place(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    data = {
+        "name": body.get("name", "").strip(),
+        "category": body.get("category", "").strip(),
+        "description": body.get("description", "").strip(),
+        "district": body.get("district", "").strip(),
+        "address": body.get("address", "").strip(),
+        "price_from": body.get("price_from") or None,
+        "price_to": body.get("price_to") or None,
+        "for_who": body.get("for_who", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "phone": body.get("phone", "").strip(),
+        "instagram": body.get("instagram", "").strip(),
+        "website": body.get("website", "").strip(),
+        "telegram": body.get("telegram", "").strip(),
+        "booking_url": body.get("booking_url", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": str(body.get("priority", "0")),
+    }
+    await update_place(place_id, data)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/content/places/{place_id}")
+async def api_delete_place(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_place(place_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/content/places/{place_id}/toggle")
+async def api_toggle_place(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await toggle_place_published(place_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/content/events")
+async def api_get_events(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
     events = await get_all_bot_events()
-    return templates.TemplateResponse("content.html", {
-        "request": request,
-        "places": places,
-        "events": events,
-        "tab": tab,
-        "msg": msg,
-        "msg_type": msg_type,
-    })
+    return JSONResponse([_serialize_record(e) for e in events])
+
+
+@app.post("/api/content/events")
+async def api_create_event(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    if not (body.get("title") or "").strip():
+        return JSONResponse({"error": "title required"}, status_code=400)
+    data = {
+        "title": body.get("title", "").strip(),
+        "description": body.get("description", "").strip(),
+        "category": body.get("category", "").strip(),
+        "date": body.get("date") or None,
+        "time": body.get("time") or None,
+        "price": body.get("price", "").strip(),
+        "place_name": body.get("place_name", "").strip(),
+        "place_address": body.get("place_address", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "ticket_url": body.get("ticket_url", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": str(body.get("priority", "0")),
+    }
+    await create_bot_event(data)
+    return JSONResponse({"ok": True})
+
+
+@app.put("/api/content/events/{event_id}")
+async def api_update_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    data = {
+        "title": body.get("title", "").strip(),
+        "description": body.get("description", "").strip(),
+        "category": body.get("category", "").strip(),
+        "date": body.get("date") or None,
+        "time": body.get("time") or None,
+        "price": body.get("price", "").strip(),
+        "place_name": body.get("place_name", "").strip(),
+        "place_address": body.get("place_address", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "ticket_url": body.get("ticket_url", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": str(body.get("priority", "0")),
+    }
+    await update_bot_event(event_id, data)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/content/events/{event_id}")
+async def api_delete_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_bot_event(event_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/content/events/{event_id}/toggle")
+async def api_toggle_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await toggle_bot_event_published(event_id)
+    return JSONResponse({"ok": True})
 
 
 # ── Places ────────────────────────────────────────────────────────────────
@@ -924,3 +1272,16 @@ async def event_delete(request: Request, event_id: int):
         return RedirectResponse("/login", status_code=303)
     await delete_bot_event(event_id)
     return RedirectResponse("/content?tab=events&msg=Видалено", status_code=303)
+
+
+# ── React SPA static files + catch-all ───────────────────────────────────
+# Mount built React assets (only if dist exists)
+_assets_dir = os.path.join(REACT_DIST, "assets")
+if os.path.isdir(_assets_dir):
+    app.mount("/assets", StaticFiles(directory=_assets_dir), name="react-assets")
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_catch_all(full_path: str, request: Request):
+    """Serve React SPA index.html for any unmatched route (client-side routing)."""
+    return _spa()
