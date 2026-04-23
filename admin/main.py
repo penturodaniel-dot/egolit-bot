@@ -38,6 +38,7 @@ from db.chat import (
     update_quick_reply,
 )
 from scrapers.karabas import scrape_all as karabas_scrape_all
+from scrapers.kino_teatr import scrape_all as kino_scrape_all, init_kino_events
 from db.menu_buttons import (
     load_all_buttons, get_button,
     create_button, update_button, toggle_button, delete_button,
@@ -392,12 +393,38 @@ async def _nightly_karabas_loop():
             await asyncio.sleep(3600)  # retry in 1h on error
 
 
+_kino_logger = logging.getLogger("kino.scheduler")
+
+
+async def _nightly_kino_loop():
+    """Run kino-teatr.ua scrape every night at 00:10 local time."""
+    while True:
+        try:
+            now = datetime.now()
+            tomorrow = (now + timedelta(days=1)).replace(
+                hour=0, minute=10, second=0, microsecond=0
+            )
+            sleep_secs = (tomorrow - now).total_seconds()
+            _kino_logger.info("Next kino-teatr scrape in %.1fh", sleep_secs / 3600)
+            await asyncio.sleep(sleep_secs)
+            _kino_logger.info("Starting nightly kino-teatr scrape…")
+            stats = await kino_scrape_all()
+            _kino_logger.info("Nightly kino-teatr scrape done: %s", stats)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            _kino_logger.exception("Nightly kino-teatr scrape failed")
+            await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def on_startup():
     await init_menu_buttons()
     await init_chat_tables()
     await init_content_tables()
+    await init_kino_events()
     asyncio.create_task(_nightly_karabas_loop())
+    asyncio.create_task(_nightly_kino_loop())
     # Ensure new lead columns exist (safe migration)
     try:
         db = await get_db()
@@ -544,6 +571,23 @@ async def api_sync_karabas(request: Request):
     try:
         stats = await karabas_scrape_all()
         return JSONResponse({"ok": True, "new": stats.get("new", 0), "updated": stats.get("updated", 0), "total_active": stats.get("total_active", 0)})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/sync-kino")
+async def api_sync_kino(request: Request):
+    """JSON endpoint: manually trigger kino-teatr.ua scrape."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    try:
+        stats = await kino_scrape_all()
+        return JSONResponse({
+            "ok": True,
+            "new": stats.get("new", 0),
+            "updated": stats.get("updated", 0),
+            "total_active": stats.get("total_active", 0),
+        })
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 

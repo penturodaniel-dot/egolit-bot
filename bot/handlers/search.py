@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ai.parse import parse_intent
 from ai.respond import format_intro, generate_match_reasons
-from db.queries import search_products, search_events, search_karabas_events, ProductResult, EventResult
+from db.queries import search_products, search_events, search_karabas_events, search_kino_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard
 from bot.states import SearchFlow
@@ -284,12 +284,19 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
         products, events = [], []
         if parsed.intent == "event":
-            events = await search_karabas_events(
-                category=parsed.event_category,
-                limit=5,
-                date_filter=date_filter,
-                search_text=search_text,
-            )
+            if parsed.event_category == "кіно":
+                events = await search_kino_events(
+                    limit=5,
+                    date_filter=date_filter,
+                    search_text=search_text,
+                )
+            else:
+                events = await search_karabas_events(
+                    category=parsed.event_category,
+                    limit=5,
+                    date_filter=date_filter,
+                    search_text=search_text,
+                )
             if not events:
                 events = await search_events(limit=5)
         else:
@@ -377,10 +384,16 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
-        results = await search_karabas_events(
-            category=event_category, limit=5, offset=offset,
-            date_filter=date_filter, search_text=search_text,
-        )
+        if event_category == "кіно":
+            results = await search_kino_events(
+                limit=5, offset=offset,
+                date_filter=date_filter, search_text=search_text,
+            )
+        else:
+            results = await search_karabas_events(
+                category=event_category, limit=5, offset=offset,
+                date_filter=date_filter, search_text=search_text,
+            )
         if not results:
             results = await search_events(limit=5)
         products, events = [], results

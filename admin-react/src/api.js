@@ -150,3 +150,7 @@ export const testNotification = () =>
 // Karabas sync
 export const syncKarabas = () =>
   request('POST', '/api/sync-karabas');
+
+// Kino-teatr sync
+export const syncKino = () =>
+  request('POST', '/api/sync-kino');

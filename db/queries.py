@@ -325,6 +325,110 @@ async def search_karabas_events(
     return results[:limit]
 
 
+# ── Cinema (kino-teatr.ua) events ────────────────────────────────────────────
+
+async def search_kino_events(
+    limit: int = 5,
+    offset: int = 0,
+    date_filter: str | None = None,
+    search_text: str | None = None,
+) -> list[EventResult]:
+    """Search cinema films scraped from kino-teatr.ua. Returns [] if table missing."""
+    pool = await get_pool()
+
+    exists = await pool.fetchval(
+        "SELECT 1 FROM information_schema.tables WHERE table_name='kino_events'"
+    )
+    if not exists:
+        return []
+
+    params: list = []
+    where = ["is_active = TRUE"]
+    today_clause = "CURRENT_DATE"
+
+    if date_filter == "today":
+        where.append(f"date_from <= {today_clause} AND (date_to >= {today_clause} OR date_to IS NULL)")
+    elif date_filter == "weekend":
+        where.append(
+            f"date_from <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days' "
+            f"AND (date_to >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' OR date_to IS NULL)"
+        )
+    elif date_filter == "week":
+        where.append(f"date_from <= CURRENT_DATE + INTERVAL '7 days' AND (date_to >= CURRENT_DATE OR date_to IS NULL)")
+    elif date_filter == "month":
+        where.append(f"date_from <= CURRENT_DATE + INTERVAL '30 days' AND (date_to >= CURRENT_DATE OR date_to IS NULL)")
+    else:
+        where.append(f"(date_to >= CURRENT_DATE OR date_to IS NULL OR date_from >= CURRENT_DATE)")
+
+    trgm_idx: int | None = None
+    order_by = "date_from ASC NULLS LAST"
+
+    if search_text:
+        trgm = await _ensure_trgm()
+        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
+        base = len(params)
+        word_conds = " OR ".join(
+            f"(title ILIKE ${base+i+1} OR COALESCE(genre,'') ILIKE ${base+i+1})"
+            for i in range(len(words))
+        )
+        params.extend(f"%{w}%" for w in words)
+
+        if trgm:
+            trgm_idx = len(params) + 1
+            where.append(f"({word_conds} OR similarity(title, ${trgm_idx}) > 0.25)")
+            params.append(search_text)
+            order_by = f"similarity(title, ${trgm_idx}) DESC, date_from ASC NULLS LAST"
+        else:
+            where.append(f"({word_conds})")
+
+    where_sql = " AND ".join(where)
+    limit_idx = len(params) + 1
+    offset_idx = len(params) + 2
+    params += [limit, offset]
+
+    rows = await pool.fetch(f"""
+        SELECT id, title, description, genre,
+               date_from::text, date_to::text,
+               price, cinema_name, image_url, source_url
+        FROM kino_events
+        WHERE {where_sql}
+        ORDER BY {order_by}
+        LIMIT ${limit_idx} OFFSET ${offset_idx}
+    """, *params)
+
+    results = []
+    for r in rows:
+        # Format date range as readable string
+        d_from = r["date_from"] or ""
+        d_to = r["date_to"] or ""
+        if d_from and d_to and d_from != d_to:
+            date_str = f"{d_from} — {d_to}"
+        else:
+            date_str = d_from or d_to
+
+        # Description: prepend genre if present
+        desc = ""
+        if r["genre"]:
+            desc = f"🎬 {r['genre']}"
+        if r["description"]:
+            desc = (desc + "\n" + r["description"][:200]).strip() if desc else r["description"][:200]
+
+        results.append(EventResult(
+            id=r["id"],
+            title=r["title"],
+            description=desc,
+            date=date_str,
+            time=None,
+            price=r["price"],
+            place_name=r["cinema_name"],
+            place_address="Дніпро",
+            city="Дніпро",
+            photo_url=r["image_url"],
+            source_url=r["source_url"],
+        ))
+    return results
+
+
 # ── Fallback events ───────────────────────────────────────────────────────────
 
 async def search_events(

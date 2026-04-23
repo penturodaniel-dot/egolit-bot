@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAnalytics, syncKarabas } from '../api.js';
+import { getAnalytics, syncKarabas, syncKino } from '../api.js';
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -77,6 +77,8 @@ export default function Analytics() {
   const [error, setError] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
+  const [kinoSyncing, setKinoSyncing] = useState(false);
+  const [kinoSyncMsg, setKinoSyncMsg] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -97,6 +99,18 @@ export default function Analytics() {
       setSyncMsg(`❌ Помилка: ${e.message}`);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleKinoSync = async () => {
+    setKinoSyncing(true); setKinoSyncMsg('');
+    try {
+      const res = await syncKino();
+      setKinoSyncMsg(`✅ +${res.new} нових, ${res.updated} оновлено, всього ${res.total_active} фільмів`);
+    } catch (e) {
+      setKinoSyncMsg(`❌ Помилка: ${e.message}`);
+    } finally {
+      setKinoSyncing(false);
     }
   };
 
@@ -127,6 +141,13 @@ export default function Analytics() {
               {syncing ? 'Синхронізація...' : 'Оновити афіші Karabas'}
             </button>
             {syncMsg && <span style={{ fontSize: 13, color: syncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{syncMsg}</span>}
+            <button className="btn-primary" onClick={handleKinoSync} disabled={kinoSyncing} style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/>
+              </svg>
+              {kinoSyncing ? 'Синхронізація...' : 'Оновити кіно'}
+            </button>
+            {kinoSyncMsg && <span style={{ fontSize: 13, color: kinoSyncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{kinoSyncMsg}</span>}
           </div>
           <button className="btn-primary" onClick={load} disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

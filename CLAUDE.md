@@ -49,7 +49,8 @@ egolist-bot/
 │   ├── parse.py              # ParsedIntent — AI parses user query; BASE_PROMPT_TEXT constant
 │   └── respond.py            # format_intro() + generate_match_reasons()
 ├── scrapers/
-│   └── karabas.py            # Scrapes dnipro.karabas.com (9 categories)
+│   ├── karabas.py            # Scrapes dnipro.karabas.com (9 categories)
+│   └── kino_teatr.py         # Scrapes api.kino-teatr.ua (Dnipro cinemas, city_id=5)
 └── config.py                 # Settings from .env
 ```
 
@@ -59,6 +60,7 @@ egolist-bot/
 | `products` | Egolist platform performers/venues (read-only, external) |
 | `events` | Egolist platform events (read-only, external) |
 | `karabas_events` | Scraped from karabas.com |
+| `kino_events` | Scraped from kino-teatr.ua (films showing in Dnipro cinemas) |
 | `menu_buttons` | Dynamic bot menu buttons |
 | `bot_leads` | Collected leads (name, phone, category, budget, date, people, details) |
 | `admin_settings` | Key-value: notification_chat_id, notification_enabled, manager_online, ai_prompt_extra |
@@ -100,6 +102,15 @@ egolist-bot/
    Graceful fallback to ILIKE-only if extension unavailable.
 4. **Multi-word ILIKE** — search_text split into words (≥3 chars), OR per word,
    so "Оля Цибульська" finds events with just "Цибульська" in title.
+
+### Cinema scraper (kino-teatr.ua)
+- `scrapers/kino_teatr.py` — scrapes `api.kino-teatr.ua` REST API, city_id=5 (Dnipro)
+- Aggregates ALL Dnipro cinemas (Multiplex, Planeta Kino, etc.) via one API
+- Stores one row per film in `kino_events` table (date_from/date_to range, cinema_name list)
+- `event_category = "кіно"` in `ai/parse.py` routes to `search_kino_events()` in `db/queries.py`
+- Tries multiple endpoint patterns gracefully; falls back to schedule-by-date if films endpoint not found
+- Nightly scheduler runs at 00:10 (10 min after Karabas at 00:00)
+- Manual sync: `POST /api/sync-kino` → "Оновити кіно" button in Analytics admin page
 
 ### Karabas scraper
 - `_parse_iso()` returns `datetime.date` and `datetime.time` objects (asyncpg requirement, NOT strings)
@@ -263,6 +274,7 @@ git push origin main
 | Analytics dashboard | ✅ |
 | Content management | ✅ |
 | Karabas scraper + sync | ✅ |
+| Cinema scraper (kino-teatr.ua) + sync | ✅ |
 | Dynamic menu buttons (full CRUD) | ✅ |
 | React admin panel (full JSON API) | ✅ |
 | pg_trgm fuzzy search | ✅ |
