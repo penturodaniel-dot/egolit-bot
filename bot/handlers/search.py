@@ -127,24 +127,44 @@ async def _send_results(
     has_more: bool,
 ):
     """Відправляє AI-текст і картки результатів."""
-    # Спочатку AI-текст вступу
     await message.answer(ai_text, parse_mode="HTML")
 
-    if products:
-        for i, p in enumerate(products, 1):
-            markup = results_keyboard(has_more=has_more) if i == len(products) else None
-            await _send_product_card(message, bot, p, i, reply_markup=markup)
-
-    elif events:
-        for i, e in enumerate(events, 1):
-            markup = results_keyboard(has_more=has_more) if i == len(events) else None
-            await _send_event_card(message, bot, e, i, reply_markup=markup)
-
-    else:
+    items = products or events
+    if not items:
         await message.answer(
             "Нічого не знайдено. Спробуй змінити запит або поговори з менеджером.",
             reply_markup=results_keyboard(has_more=False),
         )
+        return
+
+    # Progress message — visible between cards, deleted after last one
+    progress_msg = None
+    if len(items) > 1:
+        progress_msg = await message.answer("📤 Показую результати, зачекай...")
+
+    if products:
+        for i, p in enumerate(products, 1):
+            await bot.send_chat_action(message.chat.id, "upload_photo")
+            is_last = i == len(products)
+            markup = results_keyboard(has_more=has_more) if is_last else None
+            await _send_product_card(message, bot, p, i, reply_markup=markup)
+            if progress_msg and is_last:
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
+
+    elif events:
+        for i, e in enumerate(events, 1):
+            await bot.send_chat_action(message.chat.id, "upload_photo")
+            is_last = i == len(events)
+            markup = results_keyboard(has_more=has_more) if is_last else None
+            await _send_event_card(message, bot, e, i, reply_markup=markup)
+            if progress_msg and is_last:
+                try:
+                    await progress_msg.delete()
+                except Exception:
+                    pass
 
 
 async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: str):
