@@ -20,6 +20,7 @@ from db.human_sessions import (
     end_human_session,
     reply_map,
 )
+from db.chat import set_session_status, save_outgoing_message
 from bot.menu_cache import main_menu_keyboard
 
 logger = logging.getLogger(__name__)
@@ -52,13 +53,22 @@ async def activate_human_mode(chat_id: int, user, bot: Bot) -> None:
     user    — aiogram User object (message.from_user or callback.from_user).
     """
     await start_human_session(user.id, user.username, user.first_name)
+    # Sync with new chat_sessions table
+    try:
+        await set_session_status(user.id, "human")
+    except Exception:
+        pass
 
-    await bot.send_message(
-        chat_id,
+    msg_text = (
         "💬 <b>Підключаємо менеджера...</b>\n\n"
         "Пиши — менеджер відповість найближчим часом.\n"
-        "Щоб завершити чат, надішли /endchat",
+        "Щоб завершити чат, надішли /endchat"
     )
+    await bot.send_message(chat_id, msg_text)
+    try:
+        await save_outgoing_message(user.id, msg_text)
+    except Exception:
+        pass
 
     mgr_id = settings.MANAGER_TELEGRAM_ID
     if not mgr_id:
@@ -113,6 +123,10 @@ async def intercept_human_mode(message: Message, bot: Bot) -> None:
 async def user_end_chat(message: Message, bot: Bot) -> None:
     user = message.from_user
     await end_human_session(user.id)
+    try:
+        await set_session_status(user.id, "ai")
+    except Exception:
+        pass
     await message.answer(
         "✅ Чат завершено. Дякуємо!\n\nЧим ще можу допомогти?",
         reply_markup=main_menu_keyboard(),
@@ -157,11 +171,14 @@ async def manager_reply_handler(message: Message, bot: Bot) -> None:
     if not original_user_id:
         return  # Reply to some other message in manager's chat — ignore
 
+    reply_text = f"👨‍💼 <b>Менеджер:</b>\n{message.text}"
     try:
-        await bot.send_message(
-            original_user_id,
-            f"👨‍💼 <b>Менеджер:</b>\n{message.text}",
-        )
+        await bot.send_message(original_user_id, reply_text)
+        # Save manager reply to chat history
+        try:
+            await save_outgoing_message(original_user_id, reply_text)
+        except Exception:
+            pass
     except Exception as e:
         logger.warning(f"Could not deliver manager reply to {original_user_id}: {e}")
         await message.answer(f"⚠️ Не вдалось доставити повідомлення користувачу {original_user_id}")

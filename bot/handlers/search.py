@@ -10,6 +10,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from ai.parse import parse_intent
 from ai.respond import format_intro
 from db.queries import search_products, search_events, search_karabas_events, ProductResult, EventResult
+from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard
 from bot.states import SearchFlow
 
@@ -167,6 +168,12 @@ async def _send_results(
 ):
     """Відправляє AI-текст і картки результатів."""
     await message.answer(ai_text, parse_mode="HTML")
+    # Save AI response to chat history
+    try:
+        if message.from_user:
+            await save_outgoing_message(message.from_user.id, ai_text)
+    except Exception:
+        pass
 
     items = products or events
     if not items:
@@ -312,6 +319,14 @@ async def handle_free_query_state(message: Message, bot: Bot, state: FSMContext)
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
+    # If manager has taken over this chat — don't process with AI
+    if message.from_user:
+        try:
+            session = await get_session_by_user(message.from_user.id)
+            if session and session.get("status") == "human":
+                return
+        except Exception:
+            pass
     await _do_search(message, bot, state, message.text)
 
 

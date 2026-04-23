@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Egolist — Чати</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; color: #1d1d1f; overflow: hidden; }
+
+/* ── Layout ── */
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+.topbar {
+  background: #1d1d1f; color: white;
+  padding: 0 20px; height: 52px;
+  display: flex; align-items: center; gap: 16px; flex-shrink: 0;
+  border-bottom: 1px solid #333;
+}
+.topbar h1 { font-size: 17px; font-weight: 600; }
+.topbar a { color: #aaa; text-decoration: none; font-size: 13px; }
+.topbar a:hover { color: white; }
+.topbar .sep { color: #555; }
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* ── Sessions list ── */
+.sidebar {
+  width: 300px; flex-shrink: 0;
+  background: white; border-right: 1px solid #e5e5ea;
+  display: flex; flex-direction: column;
+}
+.sidebar-header { padding: 12px 14px; border-bottom: 1px solid #e5e5ea; }
+.search-input {
+  width: 100%; padding: 8px 12px; border: 1.5px solid #d2d2d7;
+  border-radius: 8px; font-size: 13px; outline: none;
+}
+.search-input:focus { border-color: #007aff; }
+.filter-tabs { display: flex; gap: 4px; margin-top: 8px; }
+.filter-tab {
+  flex: 1; padding: 5px; border: 1px solid #d2d2d7;
+  border-radius: 6px; font-size: 11px; font-weight: 600;
+  cursor: pointer; background: white; color: #555;
+  text-align: center; transition: all .15s;
+}
+.filter-tab.active { background: #007aff; color: white; border-color: #007aff; }
+
+.session-list { flex: 1; overflow-y: auto; }
+.session-item {
+  padding: 12px 14px; border-bottom: 1px solid #f0f0f5;
+  cursor: pointer; transition: background .1s; display: flex; gap: 10px;
+  align-items: flex-start;
+}
+.session-item:hover { background: #f7f7fa; }
+.session-item.active { background: #e8f0fe; }
+
+.avatar {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #007aff; color: white;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px; font-weight: 700; flex-shrink: 0;
+  overflow: hidden;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+
+.session-info { flex: 1; min-width: 0; }
+.session-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.session-preview { font-size: 12px; color: #86868b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.session-meta { display: flex; align-items: center; justify-content: space-between; margin-top: 3px; }
+.session-time { font-size: 11px; color: #aaa; }
+.unread-badge {
+  background: #007aff; color: white;
+  border-radius: 10px; font-size: 10px; font-weight: 700;
+  padding: 2px 6px; min-width: 18px; text-align: center;
+}
+
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 6px;
+}
+.status-dot.ai { background: #34c759; }
+.status-dot.human { background: #ff9500; }
+.status-dot.closed { background: #aaa; }
+
+.tag-badge {
+  display: inline-block; font-size: 10px; font-weight: 700;
+  padding: 1px 6px; border-radius: 4px; margin-left: 4px;
+}
+.tag-hot { background: #fee2e2; color: #dc2626; }
+.tag-cold { background: #dbeafe; color: #2563eb; }
+.tag-vip { background: #fef3c7; color: #d97706; }
+
+/* ── Chat panel ── */
+.chat-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  background: #f0f2f5;
+}
+.chat-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  color: #86868b; font-size: 15px;
+}
+
+.chat-header {
+  background: white; padding: 12px 18px;
+  border-bottom: 1px solid #e5e5ea;
+  display: flex; align-items: center; gap: 12px;
+}
+.chat-header-info { flex: 1; }
+.chat-header-name { font-size: 16px; font-weight: 600; }
+.chat-header-sub { font-size: 12px; color: #86868b; }
+.chat-header-actions { display: flex; gap: 8px; align-items: center; }
+
+.btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; border: none; transition: opacity .15s; text-decoration: none; }
+.btn:hover { opacity: .82; }
+.btn-blue { background: #007aff; color: white; }
+.btn-orange { background: #ff9500; color: white; }
+.btn-green { background: #34c759; color: white; }
+.btn-gray { background: #e5e5ea; color: #1d1d1f; }
+.btn-red { background: #ff3b30; color: white; }
+.btn-sm { padding: 5px 10px; font-size: 12px; }
+
+.chat-messages {
+  flex: 1; overflow-y: auto; padding: 16px 18px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+
+.msg-wrap { display: flex; }
+.msg-wrap.out { justify-content: flex-end; }
+.msg-wrap.in { justify-content: flex-start; }
+
+.msg-bubble {
+  max-width: 70%; padding: 9px 13px; border-radius: 14px;
+  font-size: 14px; line-height: 1.45; word-break: break-word;
+  position: relative;
+}
+.msg-wrap.in .msg-bubble { background: white; border-bottom-left-radius: 4px; }
+.msg-wrap.out .msg-bubble { background: #007aff; color: white; border-bottom-right-radius: 4px; }
+
+.msg-time { font-size: 10px; opacity: .6; margin-top: 4px; display: block; text-align: right; }
+
+.msg-date-sep {
+  text-align: center; font-size: 11px; color: #aaa;
+  margin: 8px 0;
+  position: relative;
+}
+.msg-date-sep::before, .msg-date-sep::after {
+  content: ''; position: absolute; top: 50%; width: 35%; height: 1px; background: #e5e5ea;
+}
+.msg-date-sep::before { left: 0; }
+.msg-date-sep::after { right: 0; }
+
+/* ── Input area ── */
+.chat-input-area {
+  background: white; border-top: 1px solid #e5e5ea;
+  padding: 12px 16px;
+}
+.input-row { display: flex; gap: 8px; align-items: flex-end; }
+.input-box {
+  flex: 1; padding: 10px 14px; border: 1.5px solid #d2d2d7;
+  border-radius: 20px; font-size: 14px; outline: none;
+  resize: none; max-height: 120px; line-height: 1.4;
+  font-family: inherit; transition: border-color .2s;
+}
+.input-box:focus { border-color: #007aff; }
+.send-btn {
+  width: 40px; height: 40px; border-radius: 50%;
+  background: #007aff; color: white; border: none;
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; transition: opacity .15s;
+}
+.send-btn:hover { opacity: .85; }
+.send-btn svg { width: 18px; height: 18px; fill: white; }
+
+.quick-replies-bar {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px;
+  max-height: 80px; overflow-y: auto;
+}
+.qr-chip {
+  padding: 5px 11px; border-radius: 14px; font-size: 12px;
+  background: #f0f0f5; border: 1px solid #d2d2d7;
+  cursor: pointer; transition: background .15s; white-space: nowrap;
+}
+.qr-chip:hover { background: #e5e5ea; }
+
+/* ── Client info sidebar ── */
+.info-sidebar {
+  width: 260px; flex-shrink: 0;
+  background: white; border-left: 1px solid #e5e5ea;
+  overflow-y: auto; padding: 16px;
+  display: none;
+}
+.info-sidebar.visible { display: block; }
+
+.info-section { margin-bottom: 18px; }
+.info-section h4 { font-size: 12px; font-weight: 700; color: #86868b; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px; }
+.info-row { font-size: 13px; margin-bottom: 4px; }
+.info-row span { color: #86868b; }
+
+.tag-select { width: 100%; padding: 7px 10px; border: 1.5px solid #d2d2d7; border-radius: 8px; font-size: 13px; outline: none; margin-top: 4px; }
+.tag-select:focus { border-color: #007aff; }
+
+/* ── Manager online toggle ── */
+.manager-toggle {
+  display: flex; align-items: center; gap: 8px; font-size: 13px;
+}
+.toggle-switch {
+  position: relative; width: 40px; height: 22px;
+  cursor: pointer;
+}
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background: #ccc; border-radius: 22px; transition: .3s;
+}
+.toggle-slider:before {
+  content: ''; position: absolute;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: white; left: 2px; bottom: 2px; transition: .3s;
+}
+input:checked + .toggle-slider { background: #34c759; }
+input:checked + .toggle-slider:before { transform: translateX(18px); }
+
+.online-label { font-weight: 600; }
+.online-label.online { color: #34c759; }
+.online-label.offline { color: #aaa; }
+
+/* ── Notification toast ── */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: #1d1d1f; color: white;
+  padding: 12px 18px; border-radius: 12px;
+  font-size: 14px; box-shadow: 0 4px 20px rgba(0,0,0,.3);
+  z-index: 9999; transform: translateY(80px); opacity: 0;
+  transition: all .3s; max-width: 300px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+
+/* ── Quick replies management ── */
+.qr-manage { margin-top: 8px; }
+.qr-item { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.qr-item-title { flex: 1; font-size: 12px; font-weight: 600; }
+.qr-item-content { font-size: 11px; color: #86868b; flex: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qr-del { background: none; border: none; color: #ff3b30; cursor: pointer; font-size: 16px; padding: 2px; }
+
+/* ── Empty state ── */
+.no-sessions { text-align: center; padding: 40px 20px; color: #86868b; font-size: 13px; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d2d2d7; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- Top bar -->
+  <div class="topbar">
+    <h1>🤖 Egolist Admin</h1>
+    <span class="sep">/</span>
+    <a href="/">Заявки</a>
+    <span class="sep">/</span>
+    <a href="/buttons">Кнопки</a>
+    <span class="sep">/</span>
+    <a href="/settings">Налаштування</a>
+    <span class="sep">/</span>
+    <a href="/prompt">AI Промт</a>
+    <span class="sep">/</span>
+    <span style="color:white">Чати</span>
+    <div class="topbar-right">
+      <div class="manager-toggle">
+        <label class="toggle-switch">
+          <input type="checkbox" id="managerOnline">
+          <span class="toggle-slider"></span>
+        </label>
+        <span class="online-label offline" id="onlineLabel">Офлайн</span>
+      </div>
+      <a href="/logout" style="margin-left:8px">Вийти</a>
+    </div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+
+    <!-- Sessions sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-header">
+        <input class="search-input" type="text" id="searchInput" placeholder="🔍 Пошук...">
+        <div class="filter-tabs">
+          <button class="filter-tab active" data-filter="all">Всі</button>
+          <button class="filter-tab" data-filter="ai">AI</button>
+          <button class="filter-tab" data-filter="human">Людина</button>
+          <button class="filter-tab" data-filter="closed">Закриті</button>
+        </div>
+      </div>
+      <div class="session-list" id="sessionList">
+        <div class="no-sessions">Завантаження...</div>
+      </div>
+    </div>
+
+    <!-- Chat panel -->
+    <div class="chat-panel" id="chatPanel">
+      <div class="chat-empty" id="chatEmpty">
+        💬 Обери чат зліва
+      </div>
+
+      <!-- Chat view (hidden until session selected) -->
+      <div id="chatView" style="display:none; flex:1; flex-direction:column; overflow:hidden; display:none;">
+        <!-- Header -->
+        <div class="chat-header">
+          <div class="avatar" id="chatAvatar">?</div>
+          <div class="chat-header-info">
+            <div class="chat-header-name" id="chatName">—</div>
+            <div class="chat-header-sub" id="chatSub">—</div>
+          </div>
+          <div class="chat-header-actions">
+            <button class="btn btn-sm btn-orange" id="btnTakeOver" onclick="takeOver()">🙋 Підключитись</button>
+            <button class="btn btn-sm btn-green" id="btnReturnAI" onclick="returnToAI()" style="display:none">🤖 Повернути AI</button>
+            <button class="btn btn-sm btn-gray" onclick="toggleInfoSidebar()">ℹ️</button>
+          </div>
+        </div>
+
+        <!-- Messages -->
+        <div class="chat-messages" id="chatMessages"></div>
+
+        <!-- Input -->
+        <div class="chat-input-area">
+          <div class="quick-replies-bar" id="quickRepliesBar"></div>
+          <div class="input-row">
+            <textarea class="input-box" id="msgInput" placeholder="Написати повідомлення..." rows="1"
+              onkeydown="handleInputKey(event)" oninput="autoResize(this)"></textarea>
+            <button class="send-btn" onclick="sendMessage()">
+              <svg viewBox="0 0 24 24"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Client info sidebar -->
+    <div class="info-sidebar" id="infoSidebar">
+      <div class="info-section">
+        <h4>Клієнт</h4>
+        <div class="info-row"><span>ID:</span> <span id="infoUserId">—</span></div>
+        <div class="info-row"><span>Username:</span> <span id="infoUsername">—</span></div>
+        <div class="info-row"><span>Ім'я:</span> <span id="infoName">—</span></div>
+        <div class="info-row"><span>Статус:</span> <span id="infoStatus">—</span></div>
+      </div>
+
+      <div class="info-section">
+        <h4>Тег</h4>
+        <select class="tag-select" id="tagSelect" onchange="setTag(this.value)">
+          <option value="">— без тегу —</option>
+          <option value="hot">🔥 Hot</option>
+          <option value="cold">🧊 Cold</option>
+          <option value="vip">⭐ VIP</option>
+        </select>
+      </div>
+
+      <div class="info-section">
+        <h4>Швидкі відповіді</h4>
+        <div class="qr-manage" id="qrManageList"></div>
+        <div style="margin-top:10px">
+          <input id="qrTitle" type="text" placeholder="Назва" style="width:100%;padding:6px 10px;border:1.5px solid #d2d2d7;border-radius:7px;font-size:12px;margin-bottom:4px;outline:none">
+          <textarea id="qrContent" placeholder="Текст відповіді..." style="width:100%;padding:6px 10px;border:1.5px solid #d2d2d7;border-radius:7px;font-size:12px;resize:none;height:60px;outline:none;font-family:inherit"></textarea>
+          <button class="btn btn-blue btn-sm" style="margin-top:4px;width:100%" onclick="addQuickReply()">+ Додати</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Notification sound (silent base64 beep) -->
+<audio id="notifSound" preload="auto">
+  <source src="data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=" type="audio/wav">
+</audio>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let sessions = [];
+let activeSessionId = null;
+let activeUserId = null;
+let lastMsgId = 0;
+let pollTimer = null;
+let sessionsTimer = null;
+let filterStatus = 'all';
+let searchQuery = '';
+let quickReplies = [];
+let notifGranted = false;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  // Request browser notification permission
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission().then(p => { notifGranted = p === 'granted'; });
+  } else {
+    notifGranted = Notification.permission === 'granted';
+  }
+
+  await loadManagerStatus();
+  await loadSessions();
+  await loadQuickReplies();
+
+  // Poll sessions list every 3s
+  sessionsTimer = setInterval(loadSessions, 3000);
+
+  // Filter tabs
+  document.querySelectorAll('.filter-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filterStatus = btn.dataset.filter;
+      renderSessions();
+    });
+  });
+
+  // Search
+  document.getElementById('searchInput').addEventListener('input', e => {
+    searchQuery = e.target.value.toLowerCase();
+    renderSessions();
+  });
+
+  // Manager online toggle
+  document.getElementById('managerOnline').addEventListener('change', async function() {
+    const online = this.checked;
+    await fetch('/api/manager-status', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({online}),
+    });
+    updateOnlineLabel(online);
+  });
+});
+
+// ── Manager status ─────────────────────────────────────────────────────────
+async function loadManagerStatus() {
+  const r = await fetch('/api/manager-status');
+  const d = await r.json();
+  document.getElementById('managerOnline').checked = d.online;
+  updateOnlineLabel(d.online);
+}
+
+function updateOnlineLabel(online) {
+  const lbl = document.getElementById('onlineLabel');
+  lbl.textContent = online ? 'Онлайн' : 'Офлайн';
+  lbl.className = 'online-label ' + (online ? 'online' : 'offline');
+}
+
+// ── Sessions ───────────────────────────────────────────────────────────────
+async function loadSessions() {
+  try {
+    const r = await fetch('/api/sessions');
+    const data = await r.json();
+
+    // Check for new unread messages to notify
+    checkNewUnread(data);
+
+    sessions = data;
+    renderSessions();
+  } catch(e) {}
+}
+
+function checkNewUnread(newSessions) {
+  newSessions.forEach(s => {
+    const old = sessions.find(o => o.id === s.id);
+    if (s.unread > 0 && s.id !== activeSessionId && (!old || old.unread < s.unread)) {
+      showNotification(s);
+    }
+  });
+}
+
+function renderSessions() {
+  const list = document.getElementById('sessionList');
+  let filtered = sessions;
+
+  if (filterStatus !== 'all') {
+    filtered = filtered.filter(s => s.status === filterStatus);
+  }
+  if (searchQuery) {
+    filtered = filtered.filter(s => {
+      const name = ((s.first_name || '') + ' ' + (s.username || '')).toLowerCase();
+      return name.includes(searchQuery);
+    });
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '<div class="no-sessions">Нічого не знайдено</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(s => {
+    const name = s.first_name || s.username || `id:${s.user_id}`;
+    const sub = s.last_message ? s.last_message.substring(0, 50) : '—';
+    const time = s.updated_at ? fmtTime(s.updated_at) : '';
+    const unread = parseInt(s.unread) || 0;
+    const tagHtml = s.tag ? `<span class="tag-badge tag-${s.tag}">${s.tag.toUpperCase()}</span>` : '';
+    const initials = name.charAt(0).toUpperCase();
+    return `
+      <div class="session-item ${s.id === activeSessionId ? 'active' : ''}" onclick="openSession(${s.id}, ${s.user_id})">
+        <div class="avatar">${initials}</div>
+        <div class="session-info">
+          <div class="session-name">${escHtml(name)}${tagHtml}</div>
+          <div class="session-preview">${escHtml(sub)}</div>
+          <div class="session-meta">
+            <span class="session-time">${time}</span>
+            ${unread > 0 ? `<span class="unread-badge">${unread}</span>` : ''}
+          </div>
+        </div>
+        <div class="status-dot ${s.status || 'ai'}"></div>
+      </div>`;
+  }).join('');
+}
+
+// ── Open session ───────────────────────────────────────────────────────────
+async function openSession(sessionId, userId) {
+  if (activeSessionId === sessionId) return;
+
+  clearInterval(pollTimer);
+  activeSessionId = sessionId;
+  activeUserId = userId;
+  lastMsgId = 0;
+
+  // Update UI
+  document.getElementById('chatEmpty').style.display = 'none';
+  const cv = document.getElementById('chatView');
+  cv.style.display = 'flex';
+  cv.style.flexDirection = 'column';
+  cv.style.flex = '1';
+  cv.style.overflow = 'hidden';
+
+  // Mark as read
+  fetch(`/api/sessions/${sessionId}/read`, {method: 'POST'});
+
+  // Fill header info
+  const s = sessions.find(x => x.id === sessionId);
+  if (s) {
+    const name = s.first_name ? (s.first_name + (s.last_name ? ' ' + s.last_name : '')) : (s.username || `id:${s.user_id}`);
+    document.getElementById('chatName').textContent = name;
+    document.getElementById('chatSub').textContent = s.username ? '@' + s.username : `Telegram ID: ${s.user_id}`;
+    document.getElementById('chatAvatar').textContent = name.charAt(0).toUpperCase();
+
+    // Info sidebar
+    document.getElementById('infoUserId').textContent = s.user_id;
+    document.getElementById('infoUsername').textContent = s.username ? '@' + s.username : '—';
+    document.getElementById('infoName').textContent = name;
+    document.getElementById('infoStatus').textContent = statusLabel(s.status);
+    document.getElementById('tagSelect').value = s.tag || '';
+
+    // Buttons
+    updateModeButtons(s.status);
+  }
+
+  // Load messages
+  const r = await fetch(`/api/sessions/${sessionId}/messages`);
+  const msgs = await r.json();
+  renderMessages(msgs, true);
+  if (msgs.length) lastMsgId = msgs[msgs.length - 1].id;
+
+  // Render quick replies
+  renderQuickRepliesBar();
+
+  // Start polling for new messages
+  pollTimer = setInterval(pollMessages, 2000);
+
+  renderSessions();
+}
+
+function updateModeButtons(status) {
+  const btnTake = document.getElementById('btnTakeOver');
+  const btnReturn = document.getElementById('btnReturnAI');
+  if (status === 'human') {
+    btnTake.style.display = 'none';
+    btnReturn.style.display = '';
+  } else {
+    btnTake.style.display = '';
+    btnReturn.style.display = 'none';
+  }
+}
+
+// ── Messages ───────────────────────────────────────────────────────────────
+function renderMessages(msgs, replace = false) {
+  const container = document.getElementById('chatMessages');
+  if (replace) container.innerHTML = '';
+
+  let lastDate = replace ? null : container.dataset.lastDate;
+
+  msgs.forEach(m => {
+    const d = m.sent_at ? new Date(m.sent_at) : new Date();
+    const dateStr = d.toLocaleDateString('uk-UA', {day:'numeric', month:'long'});
+    if (dateStr !== lastDate) {
+      const sep = document.createElement('div');
+      sep.className = 'msg-date-sep';
+      sep.textContent = dateStr;
+      container.appendChild(sep);
+      lastDate = dateStr;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = `msg-wrap ${m.direction}`;
+    const timeStr = d.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'});
+    wrap.innerHTML = `
+      <div class="msg-bubble">
+        ${escHtml(m.content || `[${m.msg_type}]`).replace(/\n/g, '<br>')}
+        <span class="msg-time">${timeStr}</span>
+      </div>`;
+    container.appendChild(wrap);
+  });
+
+  container.dataset.lastDate = lastDate;
+  container.scrollTop = container.scrollHeight;
+}
+
+async function pollMessages() {
+  if (!activeSessionId) return;
+  try {
+    const r = await fetch(`/api/sessions/${activeSessionId}/messages?after_id=${lastMsgId}`);
+    const msgs = await r.json();
+    if (msgs.length) {
+      renderMessages(msgs, false);
+      lastMsgId = msgs[msgs.length - 1].id;
+      // Mark read
+      fetch(`/api/sessions/${activeSessionId}/read`, {method: 'POST'});
+    }
+  } catch(e) {}
+}
+
+// ── Send message ───────────────────────────────────────────────────────────
+async function sendMessage() {
+  const input = document.getElementById('msgInput');
+  const text = input.value.trim();
+  if (!text || !activeSessionId) return;
+
+  input.value = '';
+  input.style.height = '';
+
+  try {
+    const r = await fetch(`/api/sessions/${activeSessionId}/send`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const d = await r.json();
+    if (!d.ok) {
+      showToast('⚠️ Не вдалось надіслати повідомлення');
+    }
+    // Trigger immediate poll
+    await pollMessages();
+  } catch(e) {
+    showToast('⚠️ Помилка надсилання');
+  }
+}
+
+function handleInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// ── Mode control ───────────────────────────────────────────────────────────
+async function takeOver() {
+  if (!activeSessionId) return;
+  await fetch(`/api/sessions/${activeSessionId}/status`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'human'}),
+  });
+  updateModeButtons('human');
+  document.getElementById('infoStatus').textContent = statusLabel('human');
+  showToast('👨‍💼 Менеджер підключений');
+  await loadSessions();
+}
+
+async function returnToAI() {
+  if (!activeSessionId) return;
+  await fetch(`/api/sessions/${activeSessionId}/status`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: 'ai'}),
+  });
+  updateModeButtons('ai');
+  document.getElementById('infoStatus').textContent = statusLabel('ai');
+  showToast('🤖 AI режим відновлено');
+  await loadSessions();
+}
+
+// ── Tag ────────────────────────────────────────────────────────────────────
+async function setTag(tag) {
+  if (!activeSessionId) return;
+  await fetch(`/api/sessions/${activeSessionId}/tag`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tag: tag || null}),
+  });
+  showToast('🏷 Тег збережено');
+}
+
+// ── Info sidebar ───────────────────────────────────────────────────────────
+function toggleInfoSidebar() {
+  const sb = document.getElementById('infoSidebar');
+  sb.classList.toggle('visible');
+}
+
+// ── Quick replies ──────────────────────────────────────────────────────────
+async function loadQuickReplies() {
+  try {
+    const r = await fetch('/api/quick-replies');
+    quickReplies = await r.json();
+    renderQuickRepliesBar();
+    renderQRManage();
+  } catch(e) {}
+}
+
+function renderQuickRepliesBar() {
+  const bar = document.getElementById('quickRepliesBar');
+  bar.innerHTML = quickReplies.map(qr =>
+    `<span class="qr-chip" onclick="useQuickReply(${escHtml(JSON.stringify(qr.content))})">${escHtml(qr.title)}</span>`
+  ).join('');
+}
+
+function renderQRManage() {
+  const list = document.getElementById('qrManageList');
+  if (!quickReplies.length) {
+    list.innerHTML = '<div style="font-size:12px;color:#aaa">Немає відповідей</div>';
+    return;
+  }
+  list.innerHTML = quickReplies.map(qr => `
+    <div class="qr-item">
+      <span class="qr-item-title">${escHtml(qr.title)}</span>
+      <span class="qr-item-content">${escHtml(qr.content)}</span>
+      <button class="qr-del" onclick="deleteQuickReply(${qr.id})">×</button>
+    </div>`).join('');
+}
+
+function useQuickReply(content) {
+  const input = document.getElementById('msgInput');
+  input.value = content;
+  input.focus();
+  autoResize(input);
+}
+
+async function addQuickReply() {
+  const title = document.getElementById('qrTitle').value.trim();
+  const content = document.getElementById('qrContent').value.trim();
+  if (!title || !content) return;
+  await fetch('/api/quick-replies', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, content}),
+  });
+  document.getElementById('qrTitle').value = '';
+  document.getElementById('qrContent').value = '';
+  await loadQuickReplies();
+}
+
+async function deleteQuickReply(id) {
+  await fetch(`/api/quick-replies/${id}`, {method: 'DELETE'});
+  await loadQuickReplies();
+}
+
+// ── Notifications ──────────────────────────────────────────────────────────
+function showNotification(session) {
+  const name = session.first_name || session.username || `id:${session.user_id}`;
+  const preview = session.last_message || 'Нове повідомлення';
+
+  // Sound
+  try { document.getElementById('notifSound').play(); } catch(e) {}
+
+  // Browser notification
+  if (notifGranted) {
+    try {
+      new Notification(`💬 ${name}`, {body: preview, icon: '/favicon.ico'});
+    } catch(e) {}
+  }
+
+  // Toast
+  showToast(`💬 <b>${escHtml(name)}</b>: ${escHtml(preview.substring(0,60))}`);
+}
+
+function showToast(html) {
+  const t = document.getElementById('toast');
+  t.innerHTML = html;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fmtTime(iso) {
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    if (d.toDateString() === now.toDateString()) {
+      return d.toLocaleTimeString('uk-UA', {hour:'2-digit', minute:'2-digit'});
+    }
+    return d.toLocaleDateString('uk-UA', {day:'numeric', month:'short'});
+  } catch(e) { return ''; }
+}
+
+function statusLabel(s) {
+  return {ai: '🤖 AI', human: '👨‍💼 Менеджер', closed: '🔒 Закрито'}[s] || s;
+}
+
+function escHtml(str) {
+  if (typeof str !== 'string') return String(str || '');
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

@@ -12,8 +12,10 @@ from db.categories_cache import load_categories
 from db.human_sessions import init_human_sessions
 from db.settings import init_settings
 from db.menu_buttons import init_menu_buttons
+from db.chat import init_chat_tables
 from scrapers.karabas import init_karabas_events
 from bot.menu_cache import reload_buttons
+from bot.middleware import ChatPersistenceMiddleware
 from bot.handlers import start, search, lead
 from bot.handlers import human, dynamic_menu
 
@@ -25,6 +27,9 @@ logger = logging.getLogger(__name__)
 
 bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
+
+# Middleware — persists every incoming message to chat DB
+dp.message.middleware(ChatPersistenceMiddleware())
 
 # Реєструємо роутери
 # human.router — ПЕРШИМ, щоб перехоплювати повідомлення юзерів у human-mode
@@ -50,6 +55,8 @@ async def on_startup():
     logger.info("Menu buttons table ready.")
     await reload_buttons()
     logger.info("Menu buttons loaded.")
+    await init_chat_tables()
+    logger.info("Chat tables ready.")
     await init_karabas_events()
     logger.info("Karabas events table ready.")
     me = await bot.get_me()

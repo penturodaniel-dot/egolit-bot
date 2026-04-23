@@ -1,11 +1,29 @@
 from fastapi import FastAPI, Request, Form, Depends
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from typing import Optional
 import asyncpg
 import httpx
+import asyncio
+import json
+from datetime import datetime
 from config import settings
+from db.chat import (
+    init_chat_tables,
+    get_all_sessions_rich,
+    get_session_by_user,
+    get_messages,
+    get_messages_after,
+    save_message,
+    set_session_status,
+    set_session_tag,
+    mark_session_read,
+    get_quick_replies,
+    create_quick_reply,
+    delete_quick_reply,
+    update_quick_reply,
+)
 from scrapers.karabas import scrape_all as karabas_scrape_all
 from db.menu_buttons import (
     load_all_buttons, get_button,
@@ -238,6 +256,7 @@ async def settings_save(
 @app.on_event("startup")
 async def on_startup():
     await init_menu_buttons()
+    await init_chat_tables()
 
 
 @app.get("/buttons", response_class=HTMLResponse)
@@ -397,3 +416,216 @@ async def update_status(
     """, status, manager_note, lead_id)
     await db.close()
     return RedirectResponse("/", status_code=303)
+
+
+# ── Chats CRM ─────────────────────────────────────────────────────────────
+
+def _session_to_dict(s: dict) -> dict:
+    """Serialize session dict with datetime → ISO strings."""
+    out = {}
+    for k, v in s.items():
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+def _msg_to_dict(m: dict) -> dict:
+    """Serialize message dict with datetime → ISO strings."""
+    out = {}
+    for k, v in m.items():
+        if isinstance(v, datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+@app.get("/chats", response_class=HTMLResponse)
+async def chats_page(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("chats.html", {"request": request})
+
+
+# ── Chat JSON API ──────────────────────────────────────────────────────────
+
+@app.get("/api/sessions")
+async def api_get_sessions(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    sessions = await get_all_sessions_rich()
+    return JSONResponse([_session_to_dict(s) for s in sessions])
+
+
+@app.get("/api/sessions/{session_id}/messages")
+async def api_get_messages(request: Request, session_id: int, after_id: int = 0):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if after_id > 0:
+        msgs = await get_messages_after(session_id, after_id)
+    else:
+        msgs = await get_messages(session_id, limit=80)
+    return JSONResponse([_msg_to_dict(m) for m in msgs])
+
+
+@app.post("/api/sessions/{session_id}/send")
+async def api_send_message(request: Request, session_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+
+    body = await request.json()
+    text = (body.get("text") or "").strip()
+    if not text:
+        return JSONResponse({"error": "empty text"}, status_code=400)
+
+    # Look up user_id from session
+    db = await get_db()
+    row = await db.fetchrow("SELECT user_id FROM chat_sessions WHERE id = $1", session_id)
+    await db.close()
+    if not row:
+        return JSONResponse({"error": "session not found"}, status_code=404)
+
+    user_id = row["user_id"]
+
+    # Send via Telegram Bot API
+    sent_ok = False
+    tg_msg_id = None
+    try:
+        async with httpx.AsyncClient(timeout=8) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                json={"chat_id": user_id, "text": text, "parse_mode": "HTML"},
+            )
+        if resp.status_code == 200:
+            sent_ok = True
+            tg_msg_id = resp.json().get("result", {}).get("message_id")
+    except Exception as e:
+        pass
+
+    # Save to DB regardless (so admin sees what was sent)
+    await save_message(
+        user_id=user_id,
+        direction="out",
+        content=text,
+        msg_type="text",
+        tg_msg_id=tg_msg_id,
+    )
+
+    return JSONResponse({"ok": sent_ok, "tg_msg_id": tg_msg_id})
+
+
+@app.post("/api/sessions/{session_id}/status")
+async def api_set_status(request: Request, session_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    new_status = body.get("status", "ai")
+    if new_status not in ("ai", "human", "closed"):
+        return JSONResponse({"error": "invalid status"}, status_code=400)
+
+    db = await get_db()
+    row = await db.fetchrow("SELECT user_id FROM chat_sessions WHERE id = $1", session_id)
+    await db.close()
+    if not row:
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    await set_session_status(row["user_id"], new_status)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/sessions/{session_id}/tag")
+async def api_set_tag(request: Request, session_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    tag = body.get("tag")  # hot | cold | vip | null
+    await set_session_tag(session_id, tag)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/sessions/{session_id}/read")
+async def api_mark_read(request: Request, session_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await mark_session_read(session_id)
+    return JSONResponse({"ok": True})
+
+
+# ── Manager online status ──────────────────────────────────────────────────
+
+@app.get("/api/manager-status")
+async def api_manager_status_get(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    db = await get_db()
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS admin_settings (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
+        )
+    """)
+    row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'manager_online'")
+    await db.close()
+    online = (row["value"] == "1") if row else False
+    return JSONResponse({"online": online})
+
+
+@app.post("/api/manager-status")
+async def api_manager_status_set(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    online = body.get("online", False)
+    db = await get_db()
+    await db.execute("""
+        INSERT INTO admin_settings (key, value) VALUES ('manager_online', $1)
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+    """, "1" if online else "0")
+    await db.close()
+    return JSONResponse({"ok": True, "online": online})
+
+
+# ── Quick replies API ──────────────────────────────────────────────────────
+
+@app.get("/api/quick-replies")
+async def api_quick_replies(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    replies = await get_quick_replies()
+    return JSONResponse(replies)
+
+
+@app.post("/api/quick-replies")
+async def api_create_quick_reply(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    content = (body.get("content") or "").strip()
+    position = int(body.get("position", 0))
+    if not title or not content:
+        return JSONResponse({"error": "title and content required"}, status_code=400)
+    await create_quick_reply(title, content, position)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/quick-replies/{reply_id}")
+async def api_delete_quick_reply(request: Request, reply_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_quick_reply(reply_id)
+    return JSONResponse({"ok": True})
+
+
+@app.put("/api/quick-replies/{reply_id}")
+async def api_update_quick_reply(request: Request, reply_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    title = (body.get("title") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not title or not content:
+        return JSONResponse({"error": "title and content required"}, status_code=400)
+    await update_quick_reply(reply_id, title, content)
+    return JSONResponse({"ok": True})
