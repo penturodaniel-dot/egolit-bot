@@ -43,6 +43,27 @@ def _media_url(uuid_str: str, name: str) -> str:
     return f"{settings.MEDIA_BASE_URL}/storage/other/{clean[0:2]}/{clean[2:4]}/conversions/{name}-feed.webp"
 
 
+# ── pg_trgm fuzzy search ───────────────────────────────────────────────────────
+
+_trgm_enabled: bool | None = None
+
+
+async def _ensure_trgm() -> bool:
+    """Enable pg_trgm extension once per process. Returns True if available."""
+    global _trgm_enabled
+    if _trgm_enabled is not None:
+        return _trgm_enabled
+    try:
+        pool = await get_pool()
+        await pool.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        _trgm_enabled = True
+    except Exception:
+        _trgm_enabled = False
+    return _trgm_enabled
+
+
+# ── Products ──────────────────────────────────────────────────────────────────
+
 async def search_products(
     category_ids: list[int] | None = None,
     city_id: int | None = None,
@@ -61,31 +82,44 @@ async def search_products(
     ]
     params: list = [city_id]
     idx = 2
+    trgm_idx: int | None = None
 
     if max_price:
         where_parts.append(f"(p.price IS NULL OR p.price <= ${idx})")
         params.append(max_price)
         idx += 1
 
-    # Точний пошук по category_id замість LIKE
     if category_ids:
         where_parts.append(f"p.category_id = ANY(${idx})")
         params.append(category_ids)
         idx += 1
 
     if search_text:
-        words = [w for w in search_text.split() if len(w) >= 3]
-        if not words:
-            words = [search_text]
+        trgm = await _ensure_trgm()
+        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
         word_conds = " OR ".join(
             f"(p.name ILIKE ${idx + i} OR p.description ILIKE ${idx + i})"
             for i in range(len(words))
         )
-        where_parts.append(f"({word_conds})")
         params.extend(f"%{w}%" for w in words)
         idx += len(words)
 
+        if trgm:
+            trgm_idx = idx
+            where_parts.append(
+                f"({word_conds} OR similarity(p.name, ${trgm_idx}) > 0.25)"
+            )
+            params.append(search_text)
+            idx += 1
+        else:
+            where_parts.append(f"({word_conds})")
+
     where_sql = " AND ".join(where_parts)
+
+    if trgm_idx:
+        order_sql = f"similarity(p.name, ${trgm_idx}) DESC, p.is_top DESC, p.is_recommended DESC, p.id DESC"
+    else:
+        order_sql = "p.is_top DESC, p.is_recommended DESC, p.id DESC"
 
     query = f"""
         SELECT
@@ -105,7 +139,7 @@ async def search_products(
             ORDER BY id LIMIT 1
         ) m ON true
         WHERE {where_sql}
-        ORDER BY p.is_top DESC, p.is_recommended DESC, p.id DESC
+        ORDER BY {order_sql}
         LIMIT ${idx} OFFSET ${idx+1}
     """
     params.extend([limit, offset])
@@ -163,6 +197,8 @@ async def search_products(
     return results[:limit]
 
 
+# ── Karabas events ────────────────────────────────────────────────────────────
+
 async def search_karabas_events(
     category: str | None = None,
     limit: int = 5,
@@ -189,7 +225,6 @@ async def search_karabas_events(
     if date_filter == "today":
         where.append("date = CURRENT_DATE")
     elif date_filter == "weekend":
-        # Nearest Saturday and Sunday
         where.append(
             "date >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' "
             "AND date <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'"
@@ -205,25 +240,37 @@ async def search_karabas_events(
         where.append(f"category = ${len(params)+1}")
         params.append(category)
 
+    trgm_idx: int | None = None
+    order_by = "date ASC NULLS LAST"
+
     if search_text:
-        words = [w for w in search_text.split() if len(w) >= 3]
-        if not words:
-            words = [search_text]
+        trgm = await _ensure_trgm()
+        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
+        base = len(params)
         word_conds = " OR ".join(
-            f"title ILIKE ${len(params)+i+1}" for i in range(len(words))
+            f"title ILIKE ${base+i+1}" for i in range(len(words))
         )
-        where.append(f"({word_conds})")
         params.extend(f"%{w}%" for w in words)
 
+        if trgm:
+            trgm_idx = len(params) + 1
+            where.append(f"({word_conds} OR similarity(title, ${trgm_idx}) > 0.25)")
+            params.append(search_text)
+            order_by = f"similarity(title, ${trgm_idx}) DESC, date ASC NULLS LAST"
+        else:
+            where.append(f"({word_conds})")
+
     where_sql = " AND ".join(where)
+    limit_idx = len(params) + 1
+    offset_idx = len(params) + 2
     params += [limit, offset]
 
     rows = await pool.fetch(f"""
         SELECT id, title, date::text, time::text, price, place_name, image_url, source_url
         FROM karabas_events
         WHERE {where_sql}
-        ORDER BY date ASC NULLS LAST
-        LIMIT ${len(params)-1} OFFSET ${len(params)}
+        ORDER BY {order_by}
+        LIMIT ${limit_idx} OFFSET ${offset_idx}
     """, *params)
 
     results = [
@@ -277,6 +324,8 @@ async def search_karabas_events(
 
     return results[:limit]
 
+
+# ── Fallback events ───────────────────────────────────────────────────────────
 
 async def search_events(
     city_id: int | None = None,
