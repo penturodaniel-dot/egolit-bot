@@ -1,14 +1,12 @@
 """
-Scraper for dnipro.karabas.com — fetches events by category,
-parses JSON-LD structured data (cleanest source), saves to karabas_events table.
-
-Usage:
-    from scrapers.karabas import scrape_all
-    stats = await scrape_all()   # {"new": 42, "updated": 10, "errors": 0}
+Scraper for dnipro.karabas.com
+URL pattern: https://dnipro.karabas.com/{category}/  (no /ua/ prefix — Ukrainian is default)
+Data source: JSON-LD <script> tags that appear after each div.result-event card
 """
 from __future__ import annotations
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional
 
@@ -21,7 +19,6 @@ logger = logging.getLogger(__name__)
 
 BASE = "https://dnipro.karabas.com"
 
-# All categories available on Karabas Dnipro
 CATEGORIES = [
     ("concerts",    "концерти"),
     ("theatres",    "театр"),
@@ -40,14 +37,12 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept-Language": "uk-UA,uk;q=0.9,en;q=0.8",
+    "Accept-Language": "uk-UA,uk;q=0.9",
 }
-
 
 # ── DB init ───────────────────────────────────────────────────────────────
 
 async def init_karabas_events() -> None:
-    """Create karabas_events table if it doesn't exist."""
     pool = await get_pool()
     await pool.execute("""
         CREATE TABLE IF NOT EXISTS karabas_events (
@@ -69,17 +64,13 @@ async def init_karabas_events() -> None:
 # ── Main entry point ──────────────────────────────────────────────────────
 
 async def scrape_all() -> dict:
-    """
-    Scrape all categories. Marks events no longer on site as inactive.
-    Returns {"new": N, "updated": N, "errors": N, "total_active": N}
-    """
     await init_karabas_events()
 
     totals = {"new": 0, "updated": 0, "errors": 0}
     seen_urls: set[str] = set()
 
     async with httpx.AsyncClient(
-        headers=HEADERS, timeout=20, follow_redirects=True
+        headers=HEADERS, timeout=30, follow_redirects=True
     ) as client:
         for slug, category_ua in CATEGORIES:
             try:
@@ -88,20 +79,22 @@ async def scrape_all() -> dict:
                 totals["updated"] += stats["updated"]
                 seen_urls.update(urls)
             except Exception as e:
-                logger.error(f"Karabas scrape error [{slug}]: {e}")
+                logger.error(f"Karabas [{slug}] error: {e}")
                 totals["errors"] += 1
 
-    # Deactivate events no longer found on the site
+    # Deactivate events no longer on site
     pool = await get_pool()
     if seen_urls:
         await pool.execute("""
-            UPDATE karabas_events SET is_active = FALSE
-            WHERE source_url NOT IN (SELECT unnest($1::text[]))
+            UPDATE karabas_events
+            SET is_active = FALSE
+            WHERE source_url != ALL($1::text[])
         """, list(seen_urls))
 
     totals["total_active"] = await pool.fetchval(
         "SELECT COUNT(*) FROM karabas_events WHERE is_active = TRUE"
-    )
+    ) or 0
+
     logger.info(f"Karabas scrape done: {totals}")
     return totals
 
@@ -111,35 +104,32 @@ async def scrape_all() -> dict:
 async def _scrape_category(
     client: httpx.AsyncClient, slug: str, category_ua: str
 ) -> tuple[dict, list[str]]:
-    url = f"{BASE}/ua/{slug}/"
+    # Ukrainian is default locale — no /ua/ prefix needed
+    url = f"{BASE}/{slug}/"
     resp = await client.get(url)
+
     if resp.status_code != 200:
-        logger.warning(f"Karabas /{slug}/: HTTP {resp.status_code}")
+        logger.warning(f"  [{slug}] HTTP {resp.status_code} for {url}")
         return {"new": 0, "updated": 0}, []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    jsonld_events = _extract_jsonld(soup)
 
-    # Build image map from HTML (JSON-LD sometimes lacks image)
-    image_map: dict[str, str] = {}
-    for card in soup.find_all("div", class_="result-event"):
-        a = card.find("a", class_="section-title-h3")
-        img = card.find("img")
-        if a and img:
-            href = a.get("href", "")
-            src = img.get("src") or img.get("data-src", "")
-            if href and src and not src.endswith("placeholder.png"):
-                image_map[href] = src
+    # JSON-LD blocks appear as siblings after each div.result-event
+    events = _extract_jsonld(soup)
+    logger.info(f"  [{slug}] found {len(events)} JSON-LD events")
+
+    if not events:
+        # Fallback: try parsing HTML cards directly
+        events = _extract_from_html(soup, category_ua)
+        logger.info(f"  [{slug}] HTML fallback: {len(events)} events")
 
     pool = await get_pool()
     new_count, updated_count = 0, 0
     scraped_urls: list[str] = []
 
-    for evt in jsonld_events:
+    for evt in events:
         try:
-            src_url, result = await _upsert_event(
-                pool, evt, category_ua, image_map
-            )
+            src_url, result = await _upsert_event(pool, evt, category_ua)
             if src_url:
                 scraped_urls.append(src_url)
             if result == "new":
@@ -147,28 +137,81 @@ async def _scrape_category(
             elif result == "updated":
                 updated_count += 1
         except Exception as e:
-            logger.warning(f"Save error '{evt.get('name', '?')}': {e}")
+            logger.warning(f"  Save error '{evt.get('name', '?')}': {e}")
 
     logger.info(f"  [{slug}] {new_count} new / {updated_count} updated")
     return {"new": new_count, "updated": updated_count}, scraped_urls
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+# ── Parsers ───────────────────────────────────────────────────────────────
 
 def _extract_jsonld(soup: BeautifulSoup) -> list[dict]:
+    """Extract all JSON-LD event objects from the page."""
     events = []
     for script in soup.find_all("script", type="application/ld+json"):
         try:
-            data = json.loads(script.string or "")
+            text = script.string or ""
+            # Fix trailing commas (Karabas has invalid JSON sometimes)
+            text = re.sub(r",\s*([}\]])", r"\1", text)
+            data = json.loads(text)
             if isinstance(data, dict) and "startDate" in data and "name" in data:
                 events.append(data)
+        except Exception as e:
+            logger.debug(f"JSON-LD parse error: {e}")
+    return events
+
+
+def _extract_from_html(soup: BeautifulSoup, category_ua: str) -> list[dict]:
+    """Fallback: parse event cards from HTML directly."""
+    events = []
+    for card in soup.find_all("div", class_="result-event"):
+        try:
+            title_tag = card.find("a", class_="section-title-h3")
+            if not title_tag:
+                continue
+
+            title = title_tag.get_text(strip=True)
+            url   = title_tag.get("href", "")
+
+            # Date/time from data-event-time (Unix timestamp)
+            dt_tag = card.find("span", class_="date-time")
+            start_date = None
+            if dt_tag and dt_tag.get("data-event-time"):
+                ts = int(dt_tag["data-event-time"])
+                start_date = datetime.fromtimestamp(ts).isoformat()
+
+            # Venue
+            venue_tag = card.find("a", class_="dotted-link")
+            place_name = venue_tag.get_text(strip=True) if venue_tag else None
+
+            # Image
+            img_tag = card.find("img")
+            image = img_tag.get("src") if img_tag else None
+
+            # Price
+            price_tag = card.find("div", class_="ev-buy")
+            price_text = None
+            if price_tag:
+                strong = price_tag.find("strong")
+                if strong and strong.get_text(strip=True):
+                    price_text = strong.get_text(strip=True) + " UAH"
+
+            if title and url:
+                events.append({
+                    "name": title,
+                    "url": url,
+                    "startDate": start_date,
+                    "image": image,
+                    "location": {"name": place_name} if place_name else {},
+                    "offers": {"lowPrice": price_text, "priceCurrency": "UAH",
+                               "availability": "InStock"} if price_text else {},
+                })
         except Exception:
-            pass
+            continue
     return events
 
 
 def _parse_iso(iso: str) -> tuple[Optional[str], Optional[str]]:
-    """'2026-07-04T17:00:00+03:00' → ('2026-07-04', '17:00')"""
     try:
         dt = datetime.fromisoformat(iso)
         return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
@@ -176,17 +219,15 @@ def _parse_iso(iso: str) -> tuple[Optional[str], Optional[str]]:
         return None, None
 
 
-async def _upsert_event(
-    pool, evt: dict, category_ua: str, image_map: dict
-) -> tuple[Optional[str], str]:
-    """Insert or update one event. Returns (source_url, 'new'|'updated'|'skip')."""
-    title = (evt.get("name") or "").strip()
-    source_url = (evt.get("url") or "").strip()
+async def _upsert_event(pool, evt: dict, category_ua: str) -> tuple[Optional[str], str]:
+    title      = (evt.get("name") or "").strip()
+    source_url = (evt.get("url")  or "").strip()
     if not title or not source_url:
         return None, "skip"
 
+    date_str, time_str = _parse_iso(evt.get("startDate") or "")
+
     # Skip past events
-    date_str, time_str = _parse_iso(evt.get("startDate", ""))
     if date_str and date_str < datetime.now().strftime("%Y-%m-%d"):
         return source_url, "skip"
 
@@ -195,7 +236,8 @@ async def _upsert_event(
     offers = evt.get("offers") or {}
     if isinstance(offers, dict):
         availability = offers.get("availability", "")
-        if "SoldOut" in availability or "Rescheduled" in availability:
+        # Only skip truly sold-out events, keep rescheduled
+        if "SoldOut" in availability:
             return source_url, "skip"
         low  = offers.get("lowPrice")
         high = offers.get("highPrice")
@@ -211,8 +253,7 @@ async def _upsert_event(
     if isinstance(location, dict):
         place_name = location.get("name")
 
-    # Image: prefer JSON-LD, fall back to HTML card
-    image_url = evt.get("image") or image_map.get(source_url)
+    image_url = evt.get("image")
 
     existing = await pool.fetchval(
         "SELECT id FROM karabas_events WHERE source_url = $1", source_url
