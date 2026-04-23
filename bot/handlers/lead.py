@@ -8,7 +8,7 @@ from bot.keyboards import lead_cancel_keyboard, back_to_menu_keyboard, manager_c
 from bot.menu_cache import main_menu_keyboard
 from bot.states import LeadFlow
 from db.connection import get_pool
-from db.settings import get_notification_chat_id, get_notification_enabled
+from db.settings import get_notification_chat_id, get_notification_enabled, get_manager_online
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -51,10 +51,13 @@ async def start_lead_flow(message: Message, state: FSMContext):
 
 @router.message(F.text == "📞 Поговорити з менеджером")
 async def handle_manager_button(message: Message, state: FSMContext):
+    online = await get_manager_online()
+    status_line = "🟢 Менеджер зараз <b>онлайн</b>" if online else "🔴 Менеджер зараз <b>офлайн</b>"
+    chat_note = "💬 <b>Живий чат</b> — пиши прямо тут, менеджер відповість у Telegram" if online else "💬 <b>Живий чат</b> — менеджер офлайн, залиш заявку"
     await message.answer(
-        "👨‍💼 <b>Як зв'яжемось з менеджером?</b>\n\n"
+        f"👨‍💼 <b>Зв'язок з менеджером</b>\n{status_line}\n\n"
         "📝 <b>Залишити заявку</b> — вкажи контакти, менеджер зателефонує\n"
-        "💬 <b>Живий чат</b> — пиши прямо тут, менеджер відповість у Telegram",
+        f"{chat_note}",
         reply_markup=manager_choice_keyboard(),
     )
 
@@ -78,9 +81,19 @@ async def callback_call_manager(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "start_chat")
 async def callback_start_chat(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    # Check if manager is currently online
+    online = await get_manager_online()
+    if not online:
+        await callback.answer("", show_alert=False)
+        await callback.message.answer(
+            "😔 <b>Менеджер зараз офлайн.</b>\n\n"
+            "Залиш заявку — ми зателефонуємо найближчим часом! 👇",
+        )
+        await start_lead_flow(callback.message, state)
+        return
+
     from bot.handlers.human import activate_human_mode
     await state.clear()
-    # Pass the user's chat id and the user object (from callback, not message)
     await activate_human_mode(callback.message.chat.id, callback.from_user, bot)
     await callback.answer()
 

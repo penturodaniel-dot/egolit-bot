@@ -46,3 +46,9 @@ async def get_notification_chat_id() -> str:
 async def get_notification_enabled() -> bool:
     val = await get_setting("notification_enabled", "1")
     return val == "1"
+
+
+async def get_manager_online() -> bool:
+    """Return True if manager has set themselves as online in admin panel."""
+    val = await get_setting("manager_online", "0")
+    return val == "1"
