@@ -1,3 +1,5 @@
+import asyncio
+
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, URLInputFile
 from aiogram.fsm.context import FSMContext
@@ -13,6 +15,16 @@ router = Router()
 
 # Telegram caption limit
 CAPTION_LIMIT = 1024
+
+
+async def _keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> None:
+    """Resends typing action every 4s so the indicator stays alive during long searches."""
+    while not stop_event.is_set():
+        try:
+            await bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        await asyncio.sleep(4)
 
 
 def _build_product_card(p: ProductResult, index: int) -> str:
@@ -141,57 +153,83 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
     thinking_msg = await message.answer("🔍 Шукаю для тебе...")
 
-    # Крок 1: AI парсить намір → точні category_ids
-    parsed = await parse_intent(user_text, history)
-
-    history.append({"role": "user", "content": user_text})
-    await state.update_data(
-        history=history[-8:],
-        last_query=user_text,
-        last_intent=parsed.intent,
-        last_event_category=parsed.event_category,
-        last_category_ids=parsed.category_ids,
-        last_max_price=parsed.max_price,
-        last_offset=0,
+    # Keep typing indicator alive while search runs
+    stop_typing = asyncio.Event()
+    typing_task = asyncio.create_task(
+        _keep_typing(bot, message.chat.id, stop_typing)
     )
 
-    await thinking_msg.delete()
+    products: list = []
+    events: list = []
+    ai_intro = ""
 
-    if parsed.needs_clarification and parsed.clarification_question:
-        await message.answer(parsed.clarification_question)
-        return
+    try:
+        # Крок 1: AI парсить намір → точні category_ids
+        parsed = await parse_intent(user_text, history)
 
-    if parsed.intent == "lead":
-        from bot.handlers.lead import start_lead_flow
-        await start_lead_flow(message, state)
-        return
-
-    # Крок 2: пошук в БД
-    date_filter = parsed.date_filter  # "today" | "weekend" | "week" | "month" | None
-    await state.update_data(last_date_filter=date_filter)
-
-    products, events = [], []
-    if parsed.intent == "event":
-        # Спочатку шукаємо в Karabas (з фільтром по категорії і даті якщо є)
-        events = await search_karabas_events(
-            category=parsed.event_category,
-            limit=5,
-            date_filter=date_filter,
+        history.append({"role": "user", "content": user_text})
+        await state.update_data(
+            history=history[-8:],
+            last_query=user_text,
+            last_intent=parsed.intent,
+            last_event_category=parsed.event_category,
+            last_category_ids=parsed.category_ids,
+            last_max_price=parsed.max_price,
+            last_offset=0,
         )
-        # Fallback на старі events якщо Karabas порожній
-        if not events:
-            events = await search_events(limit=5)
+
+        if parsed.needs_clarification and parsed.clarification_question:
+            await thinking_msg.delete()
+            await message.answer(parsed.clarification_question)
+            return
+
+        if parsed.intent == "lead":
+            await thinking_msg.delete()
+            from bot.handlers.lead import start_lead_flow
+            await start_lead_flow(message, state)
+            return
+
+        # Крок 2: пошук в БД
+        date_filter = parsed.date_filter  # "today" | "weekend" | "week" | "month" | None
+        await state.update_data(last_date_filter=date_filter)
+
+        products, events = [], []
+        if parsed.intent == "event":
+            events = await search_karabas_events(
+                category=parsed.event_category,
+                limit=5,
+                date_filter=date_filter,
+            )
+            if not events:
+                events = await search_events(limit=5)
+        else:
+            products = await search_products(
+                category_ids=parsed.category_ids or None,
+                max_price=parsed.max_price,
+                limit=5,
+                offset=0,
+            )
+
+        # Крок 3: AI генерує короткий вступ (1 речення)
+        count = len(products) or len(events)
+        ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
+
+    finally:
+        stop_typing.set()
+        typing_task.cancel()
+
+    # Редагуємо thinking message → підсумок замість видалення
+    count = len(products) if products else len(events)
+    if count:
+        try:
+            await thinking_msg.edit_text(f"✅ Знайдено {count} результатів:")
+        except Exception:
+            await thinking_msg.delete()
     else:
-        products = await search_products(
-            category_ids=parsed.category_ids or None,
-            max_price=parsed.max_price,
-            limit=5,
-            offset=0,
-        )
-
-    # Крок 3: AI генерує короткий вступ (1 речення)
-    count = len(products) or len(events)
-    ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
+        try:
+            await thinking_msg.edit_text("🔍 Результати пошуку:")
+        except Exception:
+            await thinking_msg.delete()
 
     await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events))
 
