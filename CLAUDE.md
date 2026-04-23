@@ -153,6 +153,9 @@ egolist-bot/
 - Text content field: **`content`** (NOT `text`)
 - Timestamp field: **`sent_at`** (NOT `created_at`)
 - Direction: `in` (from user) / `out` (from admin/bot)
+- Read status: **`is_read`** (BOOLEAN, default FALSE)
+  - For `direction='in'`: set TRUE by `mark_session_read()` when admin opens chat
+  - For `direction='out'`: set TRUE automatically in `save_message()` when client sends any new message (proxy read receipt — if they replied, they saw it)
 
 ## AI prompt architecture
 - `BASE_PROMPT_TEXT` — module-level constant in `ai/parse.py` (extractable for admin display)
@@ -184,6 +187,9 @@ egolist-bot/
 - Browser notifications + sound alert on new unread messages
 - Tags: hot/cold/vip per session
 - Quick replies: saved scripts, one-click insert into input
+- **Read receipts**: `✓` (grey) = sent to Telegram; `✓✓` (blue) = client read (is_read=TRUE)
+- **No optimistic updates**: send fetches real message immediately after API responds (prevents duplicates)
+- **Bubble layout**: `.bubble-wrap { flex:1; min-width:0; max-width:68% }` wraps bubble+meta; percentage width computed correctly from chat area width
 
 ## Content management
 - **bot_places**: own venues/performers searchable by bot
@@ -219,6 +225,10 @@ egolist-bot/
 - **AI asking "which city?"** — `BASE_PROMPT_TEXT` explicitly forbids city questions; stricter `needs_clarification` rules
 - **Chat messages empty in CRM** — fixed `msg.text→msg.content` and `msg.created_at→msg.sent_at` in `Chats.jsx`
 - **Russian search queries not finding Ukrainian results** — 3-layer normalization: AI transliteration + Python fallback + pg_trgm fuzzy
+- **Chat bubble text on separate lines (1 char/line)** — `.bubble-wrap` flex wrapper with `max-width:68%` fixes percentage resolution
+- **Sent messages duplicated in chat** — removed optimistic update; fetch real message immediately after send, poll won't re-add (lastMsgId already updated)
+- **✓✓ shown immediately on all messages** — now shows `✓` (sent) vs `✓✓` (read) based on `msg.is_read` from DB
+- **No real read receipts** — when client sends any message, `save_message()` marks all previous outgoing as `is_read=TRUE` (proxy receipt)
 
 ## Railway deploy workflow
 ```bash
