@@ -17,6 +17,20 @@ WELCOME_TEXT = """👋 Привіт! Я — помічник <b>Egolist</b>.
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     await reload_buttons()          # завжди свіжі кнопки при /start
+
+    # Reset human mode — both old sessions table and new chat_sessions
+    if message.from_user:
+        try:
+            from db.human_sessions import end_human_session
+            await end_human_session(message.from_user.id)
+        except Exception:
+            pass
+        try:
+            from db.chat import set_session_status
+            await set_session_status(message.from_user.id, "ai")
+        except Exception:
+            pass
+
     await message.answer(
         WELCOME_TEXT,
         reply_markup=main_menu_keyboard(),
