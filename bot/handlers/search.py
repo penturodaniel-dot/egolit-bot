@@ -249,6 +249,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
     events: list = []
     ai_intro = ""
 
+    search_error = False
     try:
         # Крок 1: AI парсить намір → точні category_ids
         parsed = await parse_intent(user_text, history)
@@ -304,9 +305,20 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         count = len(products) or len(events)
         ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
 
+    except Exception as e:
+        search_error = True
+        import logging
+        logging.getLogger(__name__).exception("Search error for query %r: %s", user_text, e)
     finally:
         stop_typing.set()
         typing_task.cancel()
+
+    if search_error:
+        try:
+            await thinking_msg.edit_text("⚠️ Виникла помилка під час пошуку. Спробуй ще раз або напиши менеджеру.")
+        except Exception:
+            await message.answer("⚠️ Виникла помилка під час пошуку. Спробуй ще раз або напиши менеджеру.")
+        return
 
     # Редагуємо thinking message → підсумок замість видалення
     count = len(products) if products else len(events)
