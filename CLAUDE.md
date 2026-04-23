@@ -42,13 +42,15 @@ egolist-bot/
 ├── ai/
 │   └── parse.py              # ParsedIntent — AI parses user query
 └── config.py                 # Settings from .env
+```
 
 ## Key design decisions
 - **Dynamic menu buttons** stored in DB (`menu_buttons` table), not hardcoded
 - **IsDynamicButton(BaseFilter)** — only known button texts go to dynamic_menu.router; everything else falls through to search.router as free-text
-- **Karabas scraper** — asyncpg requires `datetime.date`/`datetime.time` objects (NOT strings) for DATE/TIME columns
+- **Karabas scraper** — asyncpg requires `datetime.date`/`datetime.time` objects (NOT strings) for DATE/TIME columns. `_parse_iso()` returns `dt.date()` and `dt.time()`
 - **main_menu_keyboard()** lives in `bot/menu_cache.py` (NOT in bot/keyboards.py)
 - **Ukrainian locale** on karabas.com is default — URLs are `/{slug}/` without `/ua/` prefix
+- **Search logic**: Karabas → events/афіша; Egolist DB → виконавці/services
 
 ## DB tables
 - `egolist_events` — main events/services from Egolist site
@@ -70,6 +72,20 @@ egolist-bot/
 - `notification_chat_id` configured in admin → Settings
 - `notification_enabled` toggle in settings
 
+## Known bugs fixed
+- **asyncpg date type** — `_parse_iso()` was returning strings, now returns `datetime.date`/`datetime.time` objects
+- **aiogram routing** — `F.text` handler with `return` consumed all messages; fixed with `IsDynamicButton(BaseFilter)`
+- **Button edit modal** — `tojson` inside `onclick` broke HTML; fixed with `data-*` attributes + DOMContentLoaded
+- **Karabas URL** — was using `/ua/concerts/`, fixed to `/concerts/` (Ukrainian is default)
+- **Karabas JSON** — trailing commas in JSON-LD fixed with `re.sub(r",\s*([}\]])", r"\1", text)`
+- **Import error** — `main_menu_keyboard` moved from `bot/keyboards.py` to `bot/menu_cache.py`; updated imports in `human.py` and `lead.py`
+
+## Admin panel routes
+- `/` — dashboard
+- `/buttons` — manage dynamic menu buttons (tree view, add/edit/toggle/delete)
+- `/sync-events` — trigger Karabas scrape manually
+- `/settings` — notification chat ID, toggle notifications
+
 ## Railway deploy workflow
 ```bash
 git add <files>
@@ -77,3 +93,7 @@ git commit -m "описание"
 git push origin main
 # Railway автоматично деплоїть
 ```
+
+## Session notes
+- Last session: fixed Karabas scraper 0-events bug (date type mismatch)
+- After fix: trigger sync via admin panel → "🔄 Оновити афішу Karabas" to populate karabas_events table
