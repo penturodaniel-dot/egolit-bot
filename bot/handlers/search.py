@@ -5,8 +5,8 @@ from aiogram.exceptions import TelegramBadRequest
 
 from ai.parse import parse_intent
 from ai.respond import format_intro
-from db.queries import search_products, search_events, ProductResult, EventResult
-from bot.keyboards import results_keyboard, main_menu_keyboard
+from db.queries import search_products, search_events, search_karabas_events, ProductResult, EventResult
+from bot.keyboards import results_keyboard
 from bot.states import SearchFlow
 
 router = Router()
@@ -125,6 +125,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         history=history[-8:],
         last_query=user_text,
         last_intent=parsed.intent,
+        last_event_category=parsed.event_category,
         last_category_ids=parsed.category_ids,
         last_max_price=parsed.max_price,
         last_offset=0,
@@ -144,7 +145,14 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
     # Крок 2: пошук в БД
     products, events = [], []
     if parsed.intent == "event":
-        events = await search_events(limit=5)
+        # Спочатку шукаємо в Karabas (з фільтром по категорії якщо є)
+        events = await search_karabas_events(
+            category=parsed.event_category,
+            limit=5,
+        )
+        # Fallback на старі events якщо Karabas порожній
+        if not events:
+            events = await search_events(limit=5)
     else:
         products = await search_products(
             category_ids=parsed.category_ids or None,
@@ -183,13 +191,18 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     data = await state.get_data()
     offset = data.get("last_offset", 0) + 5
     intent = data.get("last_intent", "service")
+    event_category = data.get("last_event_category")
     category_ids = data.get("last_category_ids", [])
     max_price = data.get("last_max_price")
 
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
-        results = await search_events(limit=5)
+        results = await search_karabas_events(
+            category=event_category, limit=5, offset=offset
+        )
+        if not results:
+            results = await search_events(limit=5)
         products, events = [], results
     else:
         products = await search_products(

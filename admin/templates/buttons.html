@@ -106,7 +106,15 @@
 
   <div class="section-title">
     Кнопки головного меню
-    <button class="btn-add" onclick="openAdd(null)">+ Додати кнопку</button>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <form method="post" action="/sync-events" style="display:inline"
+            onsubmit="this.querySelector('button').textContent='Синхронізую...';this.querySelector('button').disabled=true;">
+        <button type="submit" class="btn-add" style="background:#34c759;">
+          🔄 Оновити афішу Karabas
+        </button>
+      </form>
+      <button class="btn-add" onclick="openAdd(null)">+ Додати кнопку</button>
+    </div>
   </div>
 
   <div class="btn-list">

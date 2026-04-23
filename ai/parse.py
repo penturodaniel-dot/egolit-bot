@@ -15,6 +15,7 @@ client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 class ParsedIntent(BaseModel):
     intent: str                            # "service" | "event" | "lead" | "other"
     category_ids: list[int]               # [100, 155] — точні ID з БД
+    event_category: Optional[str]         # "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк"|null
     max_price: Optional[int]              # 1500
     needs_clarification: bool
     clarification_question: Optional[str]
@@ -31,6 +32,7 @@ def _build_system_prompt() -> str:
 ПРАВИЛА:
 - intent = "service" — шукають виконавця або послугу
 - intent = "event"   — шукають події або заходи куди піти
+- event_category — якщо intent=event, уточни категорію: "концерти","театр","діти","стендап","фестивалі","клуби","виставки","спорт","цирк" або null якщо всі категорії
 - intent = "lead"    — хочуть залишити заявку або поговорити з менеджером
 - intent = "other"   — незрозуміло що потрібно
 - category_ids — список id категорій з таблиці вище (масив цілих чисел, НЕ порожній якщо intent=service)
@@ -79,6 +81,7 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     return ParsedIntent(
         intent=data.get("intent", "other"),
         category_ids=category_ids,
+        event_category=data.get("event_category") or None,
         max_price=data.get("max_price"),
         needs_clarification=data.get("needs_clarification", False),
         clarification_question=data.get("clarification_question"),

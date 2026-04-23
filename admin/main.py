@@ -6,6 +6,7 @@ from typing import Optional
 import asyncpg
 import httpx
 from config import settings
+from scrapers.karabas import scrape_all as karabas_scrape_all
 from db.menu_buttons import (
     load_all_buttons, get_button,
     create_button, update_button, toggle_button, delete_button,
@@ -315,6 +316,30 @@ async def buttons_delete(request: Request, btn_id: int):
         return RedirectResponse("/login", status_code=303)
     await delete_button(btn_id)
     return RedirectResponse("/buttons?msg=Кнопку+видалено&msg_type=success", status_code=303)
+
+
+# ── Karabas sync ──────────────────────────────────────────────────────────
+
+@app.post("/sync-events")
+async def sync_events(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    try:
+        stats = await karabas_scrape_all()
+        msg = (
+            f"Синхронізація завершена: "
+            f"+{stats['new']} нових, "
+            f"{stats['updated']} оновлено, "
+            f"{stats.get('total_active', '?')} активних подій"
+        )
+        return RedirectResponse(
+            f"/buttons?msg={msg}&msg_type=success", status_code=303
+        )
+    except Exception as e:
+        return RedirectResponse(
+            f"/buttons?msg=Помилка+синхронізації:+{e}&msg_type=error",
+            status_code=303,
+        )
 
 
 @app.post("/lead/{lead_id}/status")

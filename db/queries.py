@@ -114,6 +114,56 @@ async def search_products(
     return results
 
 
+async def search_karabas_events(
+    category: str | None = None,
+    limit: int = 5,
+    offset: int = 0,
+) -> list[EventResult]:
+    """Search events scraped from Karabas.com. Falls back to empty list if table missing."""
+    pool = await get_pool()
+
+    # Check table exists
+    exists = await pool.fetchval(
+        "SELECT 1 FROM information_schema.tables WHERE table_name='karabas_events'"
+    )
+    if not exists:
+        return []
+
+    params: list = []
+    where = ["is_active = TRUE", "date >= CURRENT_DATE"]
+
+    if category:
+        where.append(f"category = ${len(params)+1}")
+        params.append(category)
+
+    where_sql = " AND ".join(where)
+    params += [limit, offset]
+
+    rows = await pool.fetch(f"""
+        SELECT id, title, date::text, time::text, price, place_name, image_url
+        FROM karabas_events
+        WHERE {where_sql}
+        ORDER BY date ASC NULLS LAST
+        LIMIT ${len(params)-1} OFFSET ${len(params)}
+    """, *params)
+
+    return [
+        EventResult(
+            id=r["id"],
+            title=r["title"],
+            description="",
+            date=r["date"] or "",
+            time=r["time"] or None,
+            price=r["price"],
+            place_name=r["place_name"],
+            place_address="Дніпро",
+            city="Дніпро",
+            photo_url=r["image_url"],
+        )
+        for r in rows
+    ]
+
+
 async def search_events(
     city_id: int | None = None,
     limit: int = 5,
