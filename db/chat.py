@@ -167,6 +167,12 @@ async def save_message(
     # Update session last_message + unread
     preview = (content or f"[{msg_type}]")[:80]
     if direction == "in":
+        # Mark all previous outgoing messages as read (proxy read receipt:
+        # client sent a message → they've seen everything before it)
+        await pool.execute("""
+            UPDATE chat_messages SET is_read = TRUE
+            WHERE session_id = $1 AND direction = 'out' AND is_read = FALSE
+        """, session_id)
         await pool.execute("""
             UPDATE chat_sessions
             SET last_message  = $1,
