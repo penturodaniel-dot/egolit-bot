@@ -18,6 +18,7 @@ class ProductResult:
     telegram_contact: Optional[str]
     photo_url: Optional[str]
     is_top: bool
+    product_url: Optional[str] = None
 
 
 @dataclass
@@ -32,6 +33,7 @@ class EventResult:
     place_address: Optional[str]
     city: str
     photo_url: Optional[str]
+    source_url: Optional[str] = None
 
 
 def _media_url(uuid_str: str, name: str) -> str:
@@ -78,7 +80,7 @@ async def search_products(
             COALESCE(c.title, '') as category,
             COALESCE(g.name_ua, '') as city,
             p.price, p.phone, p.instagram, p.website, p.telegram,
-            p.is_top, p.is_recommended,
+            p.is_top, p.is_recommended, p.slug_seo,
             m.uuid, m.name as media_name
         FROM products p
         LEFT JOIN categories c ON c.id = p.category_id
@@ -99,6 +101,8 @@ async def search_products(
     results = []
     for r in rows:
         photo = _media_url(r["uuid"], r["media_name"]) if r["uuid"] else None
+        slug = r["slug_seo"]
+        product_url = f"{settings.MEDIA_BASE_URL.replace('api.', '')}/products/{slug}" if slug else None
         results.append(ProductResult(
             id=r["id"],
             name=r["name"],
@@ -112,6 +116,7 @@ async def search_products(
             telegram_contact=r["telegram"],
             photo_url=photo,
             is_top=r["is_top"] or False,
+            product_url=product_url,
         ))
     return results
 
@@ -161,7 +166,7 @@ async def search_karabas_events(
     params += [limit, offset]
 
     rows = await pool.fetch(f"""
-        SELECT id, title, date::text, time::text, price, place_name, image_url
+        SELECT id, title, date::text, time::text, price, place_name, image_url, source_url
         FROM karabas_events
         WHERE {where_sql}
         ORDER BY date ASC NULLS LAST
@@ -180,6 +185,7 @@ async def search_karabas_events(
             place_address="Дніпро",
             city="Дніпро",
             photo_url=r["image_url"],
+            source_url=r["source_url"],
         )
         for r in rows
     ]

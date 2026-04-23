@@ -5,6 +5,8 @@ from aiogram.types import Message, CallbackQuery, URLInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
 from ai.parse import parse_intent
 from ai.respond import format_intro
 from db.queries import search_products, search_events, search_karabas_events, ProductResult, EventResult
@@ -15,6 +17,20 @@ router = Router()
 
 # Telegram caption limit
 CAPTION_LIMIT = 1024
+
+
+def _card_keyboard(
+    url: str | None,
+    url_label: str,
+    more_markup: InlineKeyboardMarkup | None = None,
+) -> InlineKeyboardMarkup | None:
+    """Build inline keyboard: URL button (if url) + rows from more_markup."""
+    rows = []
+    if url:
+        rows.append([InlineKeyboardButton(text=url_label, url=url)])
+    if more_markup:
+        rows.extend(more_markup.inline_keyboard)
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 async def _keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> None:
@@ -146,7 +162,8 @@ async def _send_results(
         for i, p in enumerate(products, 1):
             await bot.send_chat_action(message.chat.id, "upload_photo")
             is_last = i == len(products)
-            markup = results_keyboard(has_more=has_more) if is_last else None
+            more = results_keyboard(has_more=has_more) if is_last else None
+            markup = _card_keyboard(p.product_url, "👤 Відкрити профіль", more)
             await _send_product_card(message, bot, p, i, reply_markup=markup)
             if progress_msg and is_last:
                 try:
@@ -158,7 +175,8 @@ async def _send_results(
         for i, e in enumerate(events, 1):
             await bot.send_chat_action(message.chat.id, "upload_photo")
             is_last = i == len(events)
-            markup = results_keyboard(has_more=has_more) if is_last else None
+            more = results_keyboard(has_more=has_more) if is_last else None
+            markup = _card_keyboard(e.source_url, "🎟 Купити квиток", more)
             await _send_event_card(message, bot, e, i, reply_markup=markup)
             if progress_msg and is_last:
                 try:
@@ -312,9 +330,13 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
 
     if products:
         for i, p in enumerate(products, 1):
-            markup = results_keyboard(has_more=True) if i == len(products) else None
+            is_last = i == len(products)
+            more = results_keyboard(has_more=True) if is_last else None
+            markup = _card_keyboard(p.product_url, "👤 Відкрити профіль", more)
             await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
     elif events:
         for i, e in enumerate(events, 1):
-            markup = results_keyboard(has_more=True) if i == len(events) else None
+            is_last = i == len(events)
+            more = results_keyboard(has_more=True) if is_last else None
+            markup = _card_keyboard(e.source_url, "🎟 Купити квиток", more)
             await _send_event_card(callback.message, bot, e, i, reply_markup=markup)
