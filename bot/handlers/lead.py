@@ -4,7 +4,8 @@ from aiogram.fsm.context import FSMContext
 
 import logging
 import httpx
-from bot.keyboards import lead_cancel_keyboard, main_menu_keyboard, back_to_menu_keyboard, manager_choice_keyboard
+from bot.keyboards import lead_cancel_keyboard, back_to_menu_keyboard, manager_choice_keyboard
+from bot.menu_cache import main_menu_keyboard
 from bot.states import LeadFlow
 from db.connection import get_pool
 from db.settings import get_notification_chat_id, get_notification_enabled

@@ -20,7 +20,7 @@ from db.human_sessions import (
     end_human_session,
     reply_map,
 )
-from bot.keyboards import main_menu_keyboard
+from bot.menu_cache import main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
