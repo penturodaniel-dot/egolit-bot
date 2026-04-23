@@ -17,6 +17,9 @@ env/
 
 # Node
 node_modules/
+# Commit admin-react/dist so Railway doesn't need Node.js in Docker
+dist/
+!admin-react/dist/
 
 # IDE
 .idea/
