@@ -118,9 +118,12 @@ async def search_karabas_events(
     category: str | None = None,
     limit: int = 5,
     offset: int = 0,
-    today_only: bool = False,
+    date_filter: str | None = None,
 ) -> list[EventResult]:
-    """Search events scraped from Karabas.com. Falls back to empty list if table missing."""
+    """Search events scraped from Karabas.com. Falls back to empty list if table missing.
+
+    date_filter: "today" | "weekend" | "week" | "month" | None (all future)
+    """
     pool = await get_pool()
 
     # Check table exists
@@ -132,7 +135,21 @@ async def search_karabas_events(
 
     params: list = []
     where = ["is_active = TRUE"]
-    where.append("date = CURRENT_DATE" if today_only else "date >= CURRENT_DATE")
+
+    if date_filter == "today":
+        where.append("date = CURRENT_DATE")
+    elif date_filter == "weekend":
+        # Nearest Saturday and Sunday
+        where.append(
+            "date >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' "
+            "AND date <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'"
+        )
+    elif date_filter == "week":
+        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '7 days'")
+    elif date_filter == "month":
+        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '30 days'")
+    else:
+        where.append("date >= CURRENT_DATE")
 
     if category:
         where.append(f"category = ${len(params)+1}")

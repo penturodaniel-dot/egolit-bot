@@ -167,16 +167,16 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         return
 
     # Крок 2: пошук в БД
-    today_only = any(w in user_text.lower() for w in ("сьогодні", "сегодня", "today"))
-    await state.update_data(last_today_only=today_only)
+    date_filter = parsed.date_filter  # "today" | "weekend" | "week" | "month" | None
+    await state.update_data(last_date_filter=date_filter)
 
     products, events = [], []
     if parsed.intent == "event":
-        # Спочатку шукаємо в Karabas (з фільтром по категорії якщо є)
+        # Спочатку шукаємо в Karabas (з фільтром по категорії і даті якщо є)
         events = await search_karabas_events(
             category=parsed.event_category,
             limit=5,
-            today_only=today_only,
+            date_filter=date_filter,
         )
         # Fallback на старі events якщо Karabas порожній
         if not events:
@@ -223,13 +223,13 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     category_ids = data.get("last_category_ids", [])
     max_price = data.get("last_max_price")
 
-    today_only = data.get("last_today_only", False)
+    date_filter = data.get("last_date_filter")
 
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
         results = await search_karabas_events(
-            category=event_category, limit=5, offset=offset, today_only=today_only
+            category=event_category, limit=5, offset=offset, date_filter=date_filter
         )
         if not results:
             results = await search_events(limit=5)

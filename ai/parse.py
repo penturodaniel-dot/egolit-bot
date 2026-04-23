@@ -16,6 +16,7 @@ class ParsedIntent(BaseModel):
     intent: str                            # "service" | "event" | "lead" | "other"
     category_ids: list[int]               # [100, 155] — точні ID з БД
     event_category: Optional[str]         # "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк"|null
+    date_filter: Optional[str]            # "today" | "weekend" | "week" | "month" | null (all future)
     max_price: Optional[int]              # 1500
     needs_clarification: bool
     clarification_question: Optional[str]
@@ -33,6 +34,12 @@ def _build_system_prompt() -> str:
 - intent = "service" — шукають виконавця або послугу
 - intent = "event"   — шукають події або заходи куди піти
 - event_category — якщо intent=event, уточни категорію: "концерти","театр","діти","стендап","фестивалі","клуби","виставки","спорт","цирк" або null якщо всі категорії
+- date_filter — якщо intent=event, визнач часовий фільтр:
+    "today"   — сьогодні (сьогодні, сегодня, today)
+    "weekend" — найближчі вихідні (вихідні, выходные, суботу, неділю, weekend)
+    "week"    — цей тиждень (цього тижня, на тижні, this week)
+    "month"   — цей місяць (цього місяця, this month)
+    null      — без фільтру по даті (всі майбутні події)
 - intent = "lead"    — хочуть залишити заявку або поговорити з менеджером
 - intent = "other"   — незрозуміло що потрібно
 - category_ids — список id категорій з таблиці вище (масив цілих чисел, НЕ порожній якщо intent=service)
@@ -41,10 +48,11 @@ def _build_system_prompt() -> str:
 - clarification_question — коротке питання якщо needs_clarification=true
 
 ПРИКЛАДИ:
-"фотограф на весілля" → {{"intent":"service","category_ids":[155],"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"аніматор для дитини до 2000 грн" → {{"intent":"service","category_ids":[100],"max_price":2000,"needs_clarification":false,"clarification_question":null}}
-"організувати корпоратив" → {{"intent":"service","category_ids":[339,331,325],"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"фотограф на весілля" → {{"intent":"service","category_ids":[155],"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"куди сьогодні піти" → {{"intent":"event","category_ids":[],"event_category":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"події на вихідних" → {{"intent":"event","category_ids":[],"event_category":null,"date_filter":"weekend","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"концерти на цьому тижні" → {{"intent":"event","category_ids":[],"event_category":"концерти","date_filter":"week","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 
 Відповідай ТІЛЬКИ валідним JSON без пояснень."""
 
@@ -82,6 +90,7 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
         intent=data.get("intent", "other"),
         category_ids=category_ids,
         event_category=data.get("event_category") or None,
+        date_filter=data.get("date_filter") or None,
         max_price=data.get("max_price"),
         needs_clarification=data.get("needs_clarification", False),
         clarification_question=data.get("clarification_question"),
