@@ -137,23 +137,33 @@
         {% if btn.action_type == 'submenu' %}
         <button class="act-btn" onclick="openAdd({{ btn.id }})">+ Підкнопка</button>
         {% endif %}
-        <button class="act-btn" onclick="openEdit({{ btn.id }}, '{{ btn.parent_id or '' }}', {{ btn.label|tojson }}, {{ btn.emoji|tojson }}, '{{ btn.action_type }}', {{ btn.ai_prompt|tojson if btn.ai_prompt else 'null' }}, {{ btn.position }})">Ред.</button>
+        <button class="act-btn edit-btn"
+          data-id="{{ btn.id }}"
+          data-parent="{{ btn.parent_id or '' }}"
+          data-label="{{ btn.label | e }}"
+          data-emoji="{{ btn.emoji | e }}"
+          data-action="{{ btn.action_type }}"
+          data-prompt="{{ btn.ai_prompt | e if btn.ai_prompt else '' }}"
+          data-position="{{ btn.position }}">Ред.</button>
         <form method="post" action="/buttons/{{ btn.id }}/toggle" style="display:inline">
           <button type="submit" class="act-btn {% if not btn.is_active %}toggle-off{% endif %}">
             {{ '✓ Вкл' if btn.is_active else '○ Викл' }}
           </button>
         </form>
         <form method="post" action="/buttons/{{ btn.id }}/delete" style="display:inline"
-              onsubmit="return confirm('Видалити кнопку «{{ btn.label }}»?{% if btn.action_type == 'submenu' %} Разом з усіма підкнопками!{% endif %}')">
+              data-label="{{ btn.label | e }}"
+              data-submenu="{{ 'true' if btn.action_type == 'submenu' else 'false' }}"
+              class="delete-form">
           <button type="submit" class="act-btn danger">✕</button>
         </form>
       </div>
     </div>
 
     {# Children of this button #}
-    {% if btn.action_type == 'submenu' and children[btn.id] %}
+    {% set btn_children = children.get(btn.id, []) %}
+    {% if btn.action_type == 'submenu' and btn_children %}
     <div class="child-header">Підменю: {{ btn.emoji }} {{ btn.label }}</div>
-    {% for child in children[btn.id] %}
+    {% for child in btn_children %}
     <div class="btn-item child {% if not child.is_active %}inactive{% endif %}">
       <span class="btn-emoji">{{ child.emoji or '☐' }}</span>
       <div class="btn-info">
@@ -169,14 +179,23 @@
         </div>
       </div>
       <div class="btn-actions">
-        <button class="act-btn" onclick="openEdit({{ child.id }}, '{{ child.parent_id }}', {{ child.label|tojson }}, {{ child.emoji|tojson }}, '{{ child.action_type }}', {{ child.ai_prompt|tojson if child.ai_prompt else 'null' }}, {{ child.position }})">Ред.</button>
+        <button class="act-btn edit-btn"
+          data-id="{{ child.id }}"
+          data-parent="{{ child.parent_id }}"
+          data-label="{{ child.label | e }}"
+          data-emoji="{{ child.emoji | e }}"
+          data-action="{{ child.action_type }}"
+          data-prompt="{{ child.ai_prompt | e if child.ai_prompt else '' }}"
+          data-position="{{ child.position }}">Ред.</button>
         <form method="post" action="/buttons/{{ child.id }}/toggle" style="display:inline">
           <button type="submit" class="act-btn {% if not child.is_active %}toggle-off{% endif %}">
             {{ '✓ Вкл' if child.is_active else '○ Викл' }}
           </button>
         </form>
         <form method="post" action="/buttons/{{ child.id }}/delete" style="display:inline"
-              onsubmit="return confirm('Видалити кнопку «{{ child.label }}»?')">
+              data-label="{{ child.label | e }}"
+              data-submenu="false"
+              class="delete-form">
           <button type="submit" class="act-btn danger">✕</button>
         </form>
       </div>
@@ -287,6 +306,34 @@ function onActionChange(val) {
   const row = document.getElementById('prompt-row');
   row.classList.toggle('visible', val === 'ai_search');
 }
+
+// ── data-* based edit buttons (fixes emoji/quote escaping issues) ──
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.edit-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      openEdit(
+        this.dataset.id,
+        this.dataset.parent,
+        this.dataset.label,
+        this.dataset.emoji,
+        this.dataset.action,
+        this.dataset.prompt,
+        this.dataset.position
+      );
+    });
+  });
+
+  document.querySelectorAll('.delete-form').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+      const label = this.dataset.label;
+      const isSubmenu = this.dataset.submenu === 'true';
+      const extra = isSubmenu ? ' Разом з усіма підкнопками!' : '';
+      if (!confirm('Видалити кнопку «' + label + '»?' + extra)) {
+        e.preventDefault();
+      }
+    });
+  });
+});
 
 // Close on overlay click
 modal.addEventListener('click', function(e) {
