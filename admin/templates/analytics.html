@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Egolist — Аналітика</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; }
+
+.header { background: #1d1d1f; color: white; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 20px; font-weight: 600; }
+.header a { color: #aaa; text-decoration: none; font-size: 13px; }
+.header a:hover { color: white; }
+.header .sep { color: #555; }
+
+.container { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
+
+.section-title { font-size: 13px; font-weight: 700; color: #86868b; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 14px; margin-top: 28px; }
+
+/* ── Stat cards ── */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; }
+.stat-card {
+  background: white; border-radius: 14px; padding: 20px 22px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.07);
+}
+.stat-label { font-size: 12px; color: #86868b; font-weight: 600; margin-bottom: 6px; }
+.stat-value { font-size: 32px; font-weight: 700; line-height: 1; }
+.stat-sub { font-size: 12px; color: #86868b; margin-top: 4px; }
+.stat-card.blue .stat-value { color: #007aff; }
+.stat-card.green .stat-value { color: #34c759; }
+.stat-card.orange .stat-value { color: #ff9500; }
+.stat-card.red .stat-value { color: #ff3b30; }
+.stat-card.purple .stat-value { color: #af52de; }
+
+/* ── Chart cards ── */
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+@media (max-width: 700px) { .charts-grid { grid-template-columns: 1fr; } }
+
+.chart-card {
+  background: white; border-radius: 14px; padding: 20px 22px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.07);
+}
+.chart-card h3 { font-size: 14px; font-weight: 600; margin-bottom: 14px; }
+.chart-wrap { height: 180px; position: relative; }
+
+canvas { width: 100% !important; }
+
+/* ── Leads breakdown ── */
+.leads-row { display: flex; gap: 10px; margin-top: 14px; }
+.leads-bar { flex: 1; background: white; border-radius: 14px; padding: 18px 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+.leads-bar-title { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+.bar-item { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.bar-label { font-size: 12px; color: #555; width: 80px; flex-shrink: 0; }
+.bar-track { flex: 1; height: 8px; background: #f0f0f5; border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width .5s; }
+.bar-count { font-size: 12px; font-weight: 600; color: #1d1d1f; width: 28px; text-align: right; }
+
+.loading { text-align: center; padding: 60px; color: #86868b; font-size: 15px; }
+.refresh-btn { background: #007aff; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; margin-left: auto; }
+.header-row { display: flex; align-items: center; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🤖 Egolist Admin</h1>
+  <span class="sep">/</span>
+  <a href="/">Заявки</a>
+  <span class="sep">/</span>
+  <a href="/buttons">Кнопки</a>
+  <span class="sep">/</span>
+  <a href="/settings">Налаштування</a>
+  <span class="sep">/</span>
+  <a href="/prompt">AI Промт</a>
+  <span class="sep">/</span>
+  <a href="/chats">💬 Чати</a>
+  <span class="sep">/</span>
+  <span style="color:white">📊 Аналітика</span>
+  <div style="margin-left:auto"><a href="/logout">Вийти</a></div>
+</div>
+
+<div class="container" id="app">
+  <div class="loading">⏳ Завантаження даних...</div>
+</div>
+
+<script>
+async function load() {
+  const r = await fetch('/api/analytics');
+  const d = await r.json();
+  render(d);
+}
+
+function render(d) {
+  const app = document.getElementById('app');
+  const leadsTotal = d.leads.total || 1; // avoid div by zero
+
+  app.innerHTML = `
+    <div class="header-row">
+      <div class="section-title" style="margin-top:0">Загальні показники</div>
+      <button class="refresh-btn" onclick="load()">↻ Оновити</button>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card blue">
+        <div class="stat-label">Всього користувачів</div>
+        <div class="stat-value">${d.users.total}</div>
+        <div class="stat-sub">+${d.users.today} сьогодні</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Активні (7 днів)</div>
+        <div class="stat-value">${d.users.active_7d}</div>
+        <div class="stat-sub">${d.users.active_30d} за 30 днів</div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-label">Діалоги</div>
+        <div class="stat-value">${d.dialogs}</div>
+        <div class="stat-sub">Унікальних сесій</div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">Повідомлень</div>
+        <div class="stat-value">${d.messages.in}</div>
+        <div class="stat-sub">${d.messages.out} відповідей бота</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Заявки</div>
+        <div class="stat-value">${d.leads.total}</div>
+        <div class="stat-sub">+${d.leads.today} сьогодні</div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-label">Передано менеджеру</div>
+        <div class="stat-value">${d.handoffs}</div>
+        <div class="stat-sub">Human handoff</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Активних подій</div>
+        <div class="stat-value">${d.events_active}</div>
+        <div class="stat-sub">Karabas + власні</div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-label">Конверсія в лід</div>
+        <div class="stat-value">${d.users.total ? Math.round(d.leads.total / d.users.total * 100) : 0}%</div>
+        <div class="stat-sub">діалог → заявка</div>
+      </div>
+    </div>
+
+    <div class="section-title">Заявки по статусах</div>
+    <div class="leads-row">
+      <div class="leads-bar">
+        <div class="leads-bar-title">Розподіл заявок</div>
+        <div class="bar-item">
+          <span class="bar-label">🔴 Нові</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(d.leads.new/leadsTotal*100)}%;background:#ff3b30"></div></div>
+          <span class="bar-count">${d.leads.new}</span>
+        </div>
+        <div class="bar-item">
+          <span class="bar-label">🟡 В роботі</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(d.leads.in_work/leadsTotal*100)}%;background:#ff9500"></div></div>
+          <span class="bar-count">${d.leads.in_work}</span>
+        </div>
+        <div class="bar-item">
+          <span class="bar-label">🟢 Закриті</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${Math.round(d.leads.done/leadsTotal*100)}%;background:#34c759"></div></div>
+          <span class="bar-count">${d.leads.done}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Динаміка за 14 днів</div>
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>👤 Нові користувачі / день</h3>
+        <div class="chart-wrap"><canvas id="chartUsers"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>💬 Повідомлень / день</h3>
+        <div class="chart-wrap"><canvas id="chartMsgs"></canvas></div>
+      </div>
+    </div>
+  `;
+
+  drawChart('chartUsers', d.charts.daily_users, '#007aff');
+  drawChart('chartMsgs', d.charts.daily_msgs, '#34c759');
+}
+
+function drawChart(id, data, color) {
+  const canvas = document.getElementById(id);
+  if (!canvas || !data.labels.length) return;
+
+  const ctx = canvas.getContext('2d');
+  const W = canvas.offsetWidth || 400;
+  const H = 180;
+  canvas.width = W;
+  canvas.height = H;
+
+  const vals = data.values;
+  const labels = data.labels;
+  const max = Math.max(...vals, 1);
+  const n = labels.length;
+  const padL = 30, padR = 10, padT = 10, padB = 30;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  ctx.clearRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = '#f0f0f5';
+  ctx.lineWidth = 1;
+  [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+    const y = padT + innerH * (1 - f);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+    ctx.fillStyle = '#aaa';
+    ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    ctx.fillText(Math.round(max * f), padL - 4, y + 3);
+  });
+
+  // Bar width
+  const barW = Math.max(4, innerW / n - 4);
+
+  vals.forEach((v, i) => {
+    const x = padL + (i / n) * innerW + (innerW / n - barW) / 2;
+    const barH = (v / max) * innerH;
+    const y = padT + innerH - barH;
+
+    ctx.fillStyle = color + '33';
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, barH, 3);
+    ctx.fill();
+
+    ctx.fillStyle = color;
+    const topH = Math.min(4, barH);
+    ctx.beginPath();
+    ctx.roundRect(x, y, barW, topH, 3);
+    ctx.fill();
+
+    // Value on top
+    if (v > 0) {
+      ctx.fillStyle = '#555';
+      ctx.font = 'bold 10px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(v, x + barW / 2, y - 3);
+    }
+
+    // Date label
+    if (n <= 14) {
+      const d = new Date(labels[i]);
+      const lbl = `${d.getDate()}.${String(d.getMonth()+1).padStart(2,'0')}`;
+      ctx.fillStyle = '#aaa';
+      ctx.font = '9px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText(lbl, x + barW / 2, H - 8);
+    }
+  });
+}
+
+load();
+</script>
+</body>
+</html>

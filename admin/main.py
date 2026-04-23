@@ -629,3 +629,135 @@ async def api_update_quick_reply(request: Request, reply_id: int):
         return JSONResponse({"error": "title and content required"}, status_code=400)
     await update_quick_reply(reply_id, title, content)
     return JSONResponse({"ok": True})
+
+
+# ── Analytics ─────────────────────────────────────────────────────────────
+
+@app.get("/analytics", response_class=HTMLResponse)
+async def analytics_page(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("analytics.html", {"request": request})
+
+
+@app.get("/api/analytics")
+async def api_analytics(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+
+    db = await get_db()
+
+    # Total users
+    total_users = await db.fetchval("SELECT COUNT(*) FROM chat_sessions") or 0
+
+    # Active users last 7 days
+    active_7d = await db.fetchval("""
+        SELECT COUNT(DISTINCT user_id) FROM chat_messages
+        WHERE sent_at >= NOW() - INTERVAL '7 days'
+    """) or 0
+
+    # Active users last 30 days
+    active_30d = await db.fetchval("""
+        SELECT COUNT(DISTINCT user_id) FROM chat_messages
+        WHERE sent_at >= NOW() - INTERVAL '30 days'
+    """) or 0
+
+    # Total dialogs (sessions with at least 1 message)
+    total_dialogs = await db.fetchval("""
+        SELECT COUNT(DISTINCT session_id) FROM chat_messages
+    """) or 0
+
+    # Total messages in / out
+    msg_in = await db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE direction='in'") or 0
+    msg_out = await db.fetchval("SELECT COUNT(*) FROM chat_messages WHERE direction='out'") or 0
+
+    # Leads
+    leads_total = 0
+    leads_new = 0
+    leads_in_work = 0
+    leads_done = 0
+    try:
+        leads_total = await db.fetchval("SELECT COUNT(*) FROM bot_leads") or 0
+        leads_new = await db.fetchval("SELECT COUNT(*) FROM bot_leads WHERE status='new'") or 0
+        leads_in_work = await db.fetchval("SELECT COUNT(*) FROM bot_leads WHERE status='in_work'") or 0
+        leads_done = await db.fetchval("SELECT COUNT(*) FROM bot_leads WHERE status='done'") or 0
+    except Exception:
+        pass
+
+    # Handoffs (sessions that were ever in human mode)
+    handoffs = await db.fetchval("""
+        SELECT COUNT(*) FROM chat_sessions WHERE status = 'human'
+    """) or 0
+
+    # New users per day (last 14 days)
+    daily_users = await db.fetch("""
+        SELECT DATE(created_at) as day, COUNT(*) as cnt
+        FROM chat_sessions
+        WHERE created_at >= NOW() - INTERVAL '14 days'
+        GROUP BY day ORDER BY day
+    """)
+
+    # Messages per day (last 14 days)
+    daily_msgs = await db.fetch("""
+        SELECT DATE(sent_at) as day, COUNT(*) as cnt
+        FROM chat_messages
+        WHERE sent_at >= NOW() - INTERVAL '14 days' AND direction='in'
+        GROUP BY day ORDER BY day
+    """)
+
+    # New users today
+    users_today = await db.fetchval("""
+        SELECT COUNT(*) FROM chat_sessions WHERE DATE(created_at) = CURRENT_DATE
+    """) or 0
+
+    # Leads today
+    leads_today = 0
+    try:
+        leads_today = await db.fetchval("""
+            SELECT COUNT(*) FROM bot_leads WHERE DATE(created_at) = CURRENT_DATE
+        """) or 0
+    except Exception:
+        pass
+
+    # Events count
+    events_count = 0
+    try:
+        events_count = await db.fetchval("SELECT COUNT(*) FROM karabas_events WHERE is_active=TRUE") or 0
+    except Exception:
+        pass
+
+    await db.close()
+
+    def rows_to_chart(rows):
+        return {
+            "labels": [str(r["day"]) for r in rows],
+            "values": [int(r["cnt"]) for r in rows],
+        }
+
+    return JSONResponse({
+        "users": {
+            "total": int(total_users),
+            "today": int(users_today),
+            "active_7d": int(active_7d),
+            "active_30d": int(active_30d),
+        },
+        "messages": {
+            "in": int(msg_in),
+            "out": int(msg_out),
+            "total": int(msg_in + msg_out),
+        },
+        "dialogs": int(total_dialogs),
+        "leads": {
+            "total": int(leads_total),
+            "today": int(leads_today),
+            "new": int(leads_new),
+            "in_work": int(leads_in_work),
+            "done": int(leads_done),
+        },
+        "handoffs": int(handoffs),
+        "events_active": int(events_count),
+        "charts": {
+            "daily_users": rows_to_chart(daily_users),
+            "daily_msgs": rows_to_chart(daily_msgs),
+        },
+    })
