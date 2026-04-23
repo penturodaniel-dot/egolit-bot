@@ -131,6 +131,19 @@
         <div class="row"><span>📞</span>{{ lead.phone or '—' }}</div>
         <div class="row"><span>💬</span>{{ lead.username or '—' }}</div>
 
+        {% if lead.category %}
+        <div class="row"><span>🏷</span>{{ lead.category }}</div>
+        {% endif %}
+        {% if lead.budget %}
+        <div class="row"><span>💰</span>{{ lead.budget }}</div>
+        {% endif %}
+        {% if lead.date_needed %}
+        <div class="row"><span>📅</span>{{ lead.date_needed }}</div>
+        {% endif %}
+        {% if lead.people_count %}
+        <div class="row"><span>👥</span>{{ lead.people_count }}</div>
+        {% endif %}
+
         {% if lead.details %}
         <div class="details">{{ lead.details }}</div>
         {% endif %}

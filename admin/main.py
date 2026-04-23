@@ -99,7 +99,11 @@ async def index(request: Request):
     db = await get_db()
 
     leads = await db.fetch("""
-        SELECT id, created_at, name, phone, username, details, status, manager_note
+        SELECT id, created_at, name, phone, username, details, status, manager_note,
+               COALESCE(category, '') AS category,
+               COALESCE(budget, '') AS budget,
+               COALESCE(date_needed, '') AS date_needed,
+               COALESCE(people_count, '') AS people_count
         FROM bot_leads
         ORDER BY created_at DESC
     """)
@@ -257,6 +261,17 @@ async def settings_save(
 async def on_startup():
     await init_menu_buttons()
     await init_chat_tables()
+    # Ensure new lead columns exist (safe migration)
+    try:
+        db = await get_db()
+        for col, coltype in [
+            ("category", "TEXT"), ("budget", "TEXT"),
+            ("date_needed", "TEXT"), ("people_count", "TEXT"),
+        ]:
+            await db.execute(f"ALTER TABLE bot_leads ADD COLUMN IF NOT EXISTS {col} {coltype}")
+        await db.close()
+    except Exception:
+        pass
 
 
 @app.get("/buttons", response_class=HTMLResponse)
