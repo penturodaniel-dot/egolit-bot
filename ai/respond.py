@@ -1,14 +1,14 @@
 """
-Другий LLM-виклик: генеруємо ТІЛЬКИ короткий вступ (1 речення).
-Деталі по кожній позиції — в окремих картках, не тут.
+AI-відповіді: вступний текст + пояснення чому кожен варіант підходить.
 """
+import json
 from openai import AsyncOpenAI
 from db.queries import ProductResult, EventResult
 from config import settings
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
-SYSTEM_PROMPT = """Ти — помічник Egolist. Відповідай по-українськи, дружньо, коротко.
+INTRO_PROMPT = """Ти — помічник Egolist. Відповідай по-українськи, дружньо, коротко.
 
 Твоя задача: написати ОДНЕ коротке вступне речення до результатів пошуку.
 НЕ перераховуй результати — вони вже будуть показані окремо.
@@ -20,6 +20,17 @@ SYSTEM_PROMPT = """Ти — помічник Egolist. Відповідай по-
 - "Знайшов варіанти для організації корпоративу 👇"
 
 Якщо результатів немає — одне речення що нічого не знайдено і варто змінити запит або звернутись до менеджера."""
+
+REASONS_PROMPT = """Ти — помічник Egolist. Відповідай по-українськи.
+
+Тобі дають запит користувача і список знайдених варіантів.
+Для кожного варіанту напиши 1 коротке речення (15-25 слів) — чому саме він підходить під цей запит.
+Фокусуйся на конкретній причині відповідності, а не загальному описі.
+
+Відповідай ТІЛЬКИ валідним JSON-масивом рядків, без пояснень:
+["причина для варіанту 1", "причина для варіанту 2", ...]
+
+Якщо варіантів більше ніж у списку — поверни стільки елементів скільки варіантів."""
 
 
 async def format_intro(
@@ -35,11 +46,69 @@ async def format_intro(
     response = await client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": INTRO_PROMPT},
             {"role": "user", "content": task},
         ],
         temperature=0.4,
         max_tokens=80,
     )
-
     return response.choices[0].message.content
+
+
+async def generate_match_reasons(
+    user_query: str,
+    products: list[ProductResult] | None = None,
+    events: list[EventResult] | None = None,
+) -> list[str]:
+    """Generate one-sentence 'why this fits' for each result. Returns list aligned to results."""
+    items = products or events or []
+    if not items:
+        return []
+
+    # Build a compact list for the AI
+    lines = []
+    for i, item in enumerate(items, 1):
+        if isinstance(item, ProductResult):
+            desc = f"{item.name} — {item.category or ''}"
+            if item.price:
+                desc += f", від {item.price} грн"
+            if item.description:
+                desc += f". {item.description[:120]}"
+        else:  # EventResult
+            desc = f"{item.title}"
+            if item.date:
+                desc += f" ({item.date})"
+            if item.price:
+                desc += f", {item.price}"
+            if item.place_name:
+                desc += f" @ {item.place_name}"
+
+        lines.append(f"{i}. {desc}")
+
+    task = (
+        f'Запит: "{user_query}"\n\n'
+        f'Варіанти:\n' + "\n".join(lines) +
+        "\n\nПоясни для кожного чому він підходить під запит."
+    )
+
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": REASONS_PROMPT},
+                {"role": "user", "content": task},
+            ],
+            temperature=0.5,
+            max_tokens=400,
+        )
+        raw = response.choices[0].message.content.strip()
+        reasons = json.loads(raw)
+        if isinstance(reasons, list):
+            # Pad or trim to match items count
+            while len(reasons) < len(items):
+                reasons.append("")
+            return reasons[:len(items)]
+    except Exception:
+        pass
+
+    return [""] * len(items)

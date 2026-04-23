@@ -8,7 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ai.parse import parse_intent
-from ai.respond import format_intro
+from ai.respond import format_intro, generate_match_reasons
 from db.queries import search_products, search_events, search_karabas_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard
@@ -67,12 +67,14 @@ async def _keep_typing(bot: Bot, chat_id: int, stop_event: asyncio.Event) -> Non
         await asyncio.sleep(4)
 
 
-def _build_product_card(p: ProductResult, index: int) -> str:
+def _build_product_card(p: ProductResult, index: int, reason: str = "") -> str:
     lines = [f"<b>{index}. {p.name}</b>"]
     if p.category:
         lines.append(f"📂 {p.category}")
     if p.price:
         lines.append(f"💰 від {p.price} грн")
+    if reason:
+        lines.append(f"✅ <i>{reason}</i>")
     if p.description:
         lines.append(p.description[:200])
     contacts = []
@@ -87,7 +89,7 @@ def _build_product_card(p: ProductResult, index: int) -> str:
     return "\n".join(lines)
 
 
-def _build_event_card(e: EventResult, index: int) -> str:
+def _build_event_card(e: EventResult, index: int, reason: str = "") -> str:
     lines = [f"<b>{index}. {e.title}</b>"]
     date_str = e.date
     if e.time:
@@ -95,6 +97,8 @@ def _build_event_card(e: EventResult, index: int) -> str:
     lines.append(f"📅 {date_str}")
     if e.price:
         lines.append(f"💰 {e.price}")
+    if reason:
+        lines.append(f"✅ <i>{reason}</i>")
     if e.place_name:
         lines.append(f"📍 {e.place_name}")
     if e.place_address:
@@ -108,9 +112,10 @@ async def _send_product_card(
     product: ProductResult,
     index: int,
     reply_markup=None,
+    reason: str = "",
 ):
     """Відправляє картку продукту — з фото якщо є, інакше текстом."""
-    card_text = _build_product_card(product, index)
+    card_text = _build_product_card(product, index, reason)
 
     if product.photo_url:
         try:
@@ -124,10 +129,8 @@ async def _send_product_card(
             )
             return
         except (TelegramBadRequest, Exception):
-            # Фото недоступне — падаємо на текст
             pass
 
-    # Fallback: текстова картка
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
 
 
@@ -137,9 +140,10 @@ async def _send_event_card(
     event: EventResult,
     index: int,
     reply_markup=None,
+    reason: str = "",
 ):
     """Відправляє картку події — з фото якщо є, інакше текстом."""
-    card_text = _build_event_card(event, index)
+    card_text = _build_event_card(event, index, reason)
 
     if event.photo_url:
         try:
@@ -165,10 +169,10 @@ async def _send_results(
     events: list[EventResult],
     ai_text: str,
     has_more: bool,
+    user_query: str = "",
 ):
     """Відправляє AI-текст і картки результатів."""
     await message.answer(ai_text, parse_mode="HTML")
-    # Save AI response to chat history
     try:
         if message.from_user:
             await save_outgoing_message(message.from_user.id, ai_text)
@@ -183,6 +187,18 @@ async def _send_results(
         )
         return
 
+    # Generate "why this fits" reasons for all results in one AI call
+    reasons: list[str] = []
+    if user_query and items:
+        try:
+            reasons = await generate_match_reasons(
+                user_query,
+                products=products if products else None,
+                events=events if events else None,
+            )
+        except Exception:
+            reasons = [""] * len(items)
+
     # Progress message — visible between cards, deleted after last one
     progress_msg = None
     if len(items) > 1:
@@ -194,7 +210,8 @@ async def _send_results(
             is_last = i == len(products)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _product_contact_keyboard(p, more)
-            await _send_product_card(message, bot, p, i, reply_markup=markup)
+            reason = reasons[i - 1] if i <= len(reasons) else ""
+            await _send_product_card(message, bot, p, i, reply_markup=markup, reason=reason)
             if progress_msg and is_last:
                 try:
                     await progress_msg.delete()
@@ -207,7 +224,8 @@ async def _send_results(
             is_last = i == len(events)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🎟 Купити квиток", more)
-            await _send_event_card(message, bot, e, i, reply_markup=markup)
+            reason = reasons[i - 1] if i <= len(reasons) else ""
+            await _send_event_card(message, bot, e, i, reply_markup=markup, reason=reason)
             if progress_msg and is_last:
                 try:
                     await progress_msg.delete()
@@ -303,7 +321,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         except Exception:
             await thinking_msg.delete()
 
-    await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events))
+    await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events), user_query=user_text)
 
 
 # Фіксовані кнопки видалені — тепер всі кнопки меню динамічні (dynamic_menu.py)
