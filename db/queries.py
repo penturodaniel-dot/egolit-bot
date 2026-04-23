@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Optional
 from db.connection import get_pool
 from config import settings
+from db.content import search_bot_places, search_bot_events_active
 
 
 @dataclass
@@ -124,7 +125,35 @@ async def search_products(
             is_top=r["is_top"] or False,
             product_url=product_url,
         ))
-    return results
+
+    # Also search bot-managed places (priority items shown first)
+    try:
+        bot_rows = await search_bot_places(
+            search_text=search_text,
+            max_price=max_price,
+            limit=limit,
+            offset=offset,
+        )
+        for r in bot_rows:
+            results.insert(0 if r.get("is_featured") else len(results), ProductResult(
+                id=-(r["id"]),  # negative id to avoid collision
+                name=r["name"],
+                description=(r.get("description") or "")[:300],
+                category=r.get("category") or "",
+                city=r.get("city") or "Дніпро",
+                price=r.get("price_from"),
+                phone=r.get("phone"),
+                instagram=r.get("instagram"),
+                website=r.get("website") or r.get("booking_url"),
+                telegram_contact=r.get("telegram"),
+                photo_url=r.get("photo_url"),
+                is_top=bool(r.get("is_featured")),
+                product_url=r.get("booking_url"),
+            ))
+    except Exception:
+        pass
+
+    return results[:limit]
 
 
 async def search_karabas_events(
@@ -184,7 +213,7 @@ async def search_karabas_events(
         LIMIT ${len(params)-1} OFFSET ${len(params)}
     """, *params)
 
-    return [
+    results = [
         EventResult(
             id=r["id"],
             title=r["title"],
@@ -200,6 +229,40 @@ async def search_karabas_events(
         )
         for r in rows
     ]
+
+    # Prepend bot-managed featured events
+    try:
+        bot_evs = await search_bot_events_active(
+            search_text=search_text,
+            category=category,
+            date_filter=date_filter,
+            limit=limit,
+            offset=offset,
+        )
+        for e in bot_evs:
+            date_str = str(e["date"]) if e.get("date") else ""
+            time_str = str(e["time"]) if e.get("time") else None
+            ev = EventResult(
+                id=-(e["id"]),
+                title=e["title"],
+                description=(e.get("description") or "")[:300],
+                date=date_str,
+                time=time_str,
+                price=e.get("price"),
+                place_name=e.get("place_name"),
+                place_address=e.get("place_address") or "Дніпро",
+                city=e.get("city") or "Дніпро",
+                photo_url=e.get("photo_url"),
+                source_url=e.get("ticket_url"),
+            )
+            if e.get("is_featured"):
+                results.insert(0, ev)
+            else:
+                results.append(ev)
+    except Exception:
+        pass
+
+    return results[:limit]
 
 
 async def search_events(

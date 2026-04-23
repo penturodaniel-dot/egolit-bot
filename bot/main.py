@@ -13,6 +13,7 @@ from db.human_sessions import init_human_sessions
 from db.settings import init_settings
 from db.menu_buttons import init_menu_buttons
 from db.chat import init_chat_tables
+from db.content import init_content_tables
 from scrapers.karabas import init_karabas_events
 from bot.menu_cache import reload_buttons
 from bot.middleware import ChatPersistenceMiddleware
@@ -57,6 +58,8 @@ async def on_startup():
     logger.info("Menu buttons loaded.")
     await init_chat_tables()
     logger.info("Chat tables ready.")
+    await init_content_tables()
+    logger.info("Content tables ready.")
     await init_karabas_events()
     logger.info("Karabas events table ready.")
     me = await bot.get_me()

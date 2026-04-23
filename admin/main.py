@@ -9,6 +9,11 @@ import asyncio
 import json
 from datetime import datetime
 from config import settings
+from db.content import (
+    init_content_tables,
+    get_all_places, get_place, create_place, update_place, delete_place, toggle_place_published,
+    get_all_bot_events, get_bot_event, create_bot_event, update_bot_event, delete_bot_event, toggle_bot_event_published,
+)
 from db.chat import (
     init_chat_tables,
     get_all_sessions_rich,
@@ -261,6 +266,7 @@ async def settings_save(
 async def on_startup():
     await init_menu_buttons()
     await init_chat_tables()
+    await init_content_tables()
     # Ensure new lead columns exist (safe migration)
     try:
         db = await get_db()
@@ -776,3 +782,145 @@ async def api_analytics(request: Request):
             "daily_msgs": rows_to_chart(daily_msgs),
         },
     })
+
+
+# ── Content management ────────────────────────────────────────────────────
+
+@app.get("/content", response_class=HTMLResponse)
+async def content_page(request: Request, tab: str = "places", msg: str = "", msg_type: str = "success"):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    places = await get_all_places()
+    events = await get_all_bot_events()
+    return templates.TemplateResponse("content.html", {
+        "request": request,
+        "places": places,
+        "events": events,
+        "tab": tab,
+        "msg": msg,
+        "msg_type": msg_type,
+    })
+
+
+# ── Places ────────────────────────────────────────────────────────────────
+
+def _place_from_form(form: dict) -> dict:
+    return {
+        "name": form.get("name", "").strip(),
+        "category": form.get("category", "").strip(),
+        "description": form.get("description", "").strip(),
+        "district": form.get("district", "").strip(),
+        "address": form.get("address", "").strip(),
+        "price_from": form.get("price_from", "").strip() or None,
+        "price_to": form.get("price_to", "").strip() or None,
+        "for_who": form.get("for_who", "").strip(),
+        "tags": form.get("tags", "").strip(),
+        "phone": form.get("phone", "").strip(),
+        "instagram": form.get("instagram", "").strip(),
+        "website": form.get("website", "").strip(),
+        "telegram": form.get("telegram", "").strip(),
+        "booking_url": form.get("booking_url", "").strip(),
+        "photo_url": form.get("photo_url", "").strip(),
+        "city": form.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": "is_published" in form,
+        "is_featured": "is_featured" in form,
+        "priority": form.get("priority", "0").strip() or "0",
+    }
+
+
+@app.post("/content/places/add")
+async def place_add(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    data = _place_from_form(dict(form))
+    if not data["name"]:
+        return RedirectResponse("/content?tab=places&msg=Назва+обов%27язкова&msg_type=error", status_code=303)
+    await create_place(data)
+    return RedirectResponse("/content?tab=places&msg=Місце+додано", status_code=303)
+
+
+@app.post("/content/places/{place_id}/edit")
+async def place_edit(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    data = _place_from_form(dict(form))
+    await update_place(place_id, data)
+    return RedirectResponse("/content?tab=places&msg=Збережено", status_code=303)
+
+
+@app.post("/content/places/{place_id}/toggle")
+async def place_toggle(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await toggle_place_published(place_id)
+    return RedirectResponse("/content?tab=places", status_code=303)
+
+
+@app.post("/content/places/{place_id}/delete")
+async def place_delete(request: Request, place_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await delete_place(place_id)
+    return RedirectResponse("/content?tab=places&msg=Видалено", status_code=303)
+
+
+# ── Bot events ────────────────────────────────────────────────────────────
+
+def _event_from_form(form: dict) -> dict:
+    return {
+        "title": form.get("title", "").strip(),
+        "description": form.get("description", "").strip(),
+        "category": form.get("category", "").strip(),
+        "date": form.get("date", "").strip() or None,
+        "time": form.get("time", "").strip() or None,
+        "price": form.get("price", "").strip(),
+        "place_name": form.get("place_name", "").strip(),
+        "place_address": form.get("place_address", "").strip(),
+        "tags": form.get("tags", "").strip(),
+        "photo_url": form.get("photo_url", "").strip(),
+        "ticket_url": form.get("ticket_url", "").strip(),
+        "city": form.get("city", "Дніпро").strip() or "Дніпро",
+        "is_published": "is_published" in form,
+        "is_featured": "is_featured" in form,
+        "priority": form.get("priority", "0").strip() or "0",
+    }
+
+
+@app.post("/content/events/add")
+async def event_add(request: Request):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    data = _event_from_form(dict(form))
+    if not data["title"]:
+        return RedirectResponse("/content?tab=events&msg=Назва+обов%27язкова&msg_type=error", status_code=303)
+    await create_bot_event(data)
+    return RedirectResponse("/content?tab=events&msg=Подію+додано", status_code=303)
+
+
+@app.post("/content/events/{event_id}/edit")
+async def event_edit(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    form = await request.form()
+    data = _event_from_form(dict(form))
+    await update_bot_event(event_id, data)
+    return RedirectResponse("/content?tab=events&msg=Збережено", status_code=303)
+
+
+@app.post("/content/events/{event_id}/toggle")
+async def event_toggle(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await toggle_bot_event_published(event_id)
+    return RedirectResponse("/content?tab=events", status_code=303)
+
+
+@app.post("/content/events/{event_id}/delete")
+async def event_delete(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return RedirectResponse("/login", status_code=303)
+    await delete_bot_event(event_id)
+    return RedirectResponse("/content?tab=events&msg=Видалено", status_code=303)

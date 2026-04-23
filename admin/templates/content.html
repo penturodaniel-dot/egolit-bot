@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Egolist — Контент</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f7; color: #1d1d1f; }
+
+.header { background: #1d1d1f; color: white; padding: 16px 32px; display: flex; align-items: center; gap: 16px; }
+.header h1 { font-size: 20px; font-weight: 600; }
+.header a { color: #aaa; text-decoration: none; font-size: 13px; }
+.header a:hover { color: white; }
+.header .sep { color: #555; }
+
+.container { max-width: 1100px; margin: 28px auto; padding: 0 24px; }
+
+.alert { padding: 12px 16px; border-radius: 10px; font-size: 14px; margin-bottom: 18px; }
+.alert-success { background: #d1fae5; color: #065f46; }
+.alert-error   { background: #fee2e2; color: #991b1b; }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; }
+.tab-btn {
+  padding: 9px 20px; border-radius: 10px; font-size: 14px; font-weight: 600;
+  cursor: pointer; border: none; background: white; color: #555;
+  box-shadow: 0 1px 3px rgba(0,0,0,.08); transition: all .15s;
+}
+.tab-btn.active { background: #007aff; color: white; }
+
+/* Table */
+.card { background: white; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.07); overflow: hidden; margin-bottom: 20px; }
+.card-header { padding: 16px 20px; border-bottom: 1px solid #f0f0f5; display: flex; align-items: center; justify-content: space-between; }
+.card-header h2 { font-size: 16px; font-weight: 600; }
+
+table { width: 100%; border-collapse: collapse; }
+th { background: #f7f7fa; font-size: 12px; font-weight: 700; color: #86868b; padding: 10px 16px; text-align: left; text-transform: uppercase; letter-spacing: .4px; }
+td { padding: 12px 16px; border-top: 1px solid #f0f0f5; font-size: 13px; vertical-align: middle; }
+tr:hover td { background: #fafafa; }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; }
+.badge-green { background: #d1fae5; color: #065f46; }
+.badge-gray  { background: #f0f0f5; color: #555; }
+.badge-gold  { background: #fef3c7; color: #92400e; }
+
+.btn { display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; text-decoration: none; transition: opacity .15s; }
+.btn:hover { opacity: .82; }
+.btn-blue   { background: #007aff; color: white; }
+.btn-gray   { background: #e5e5ea; color: #1d1d1f; }
+.btn-red    { background: #fee2e2; color: #dc2626; }
+.btn-orange { background: #ff9500; color: white; }
+
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.name-cell { font-weight: 600; max-width: 200px; }
+.desc-cell { color: #86868b; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-cell  { font-size: 11px; color: #86868b; }
+
+/* Modal */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.45); z-index: 100;
+  align-items: flex-start; justify-content: center;
+  padding: 40px 16px; overflow-y: auto;
+}
+.modal-overlay.open { display: flex; }
+.modal {
+  background: white; border-radius: 16px; padding: 28px 32px;
+  width: 100%; max-width: 640px; box-shadow: 0 8px 40px rgba(0,0,0,.2);
+  position: relative;
+}
+.modal h3 { font-size: 18px; font-weight: 700; margin-bottom: 20px; }
+.modal-close { position: absolute; top: 16px; right: 20px; font-size: 22px; cursor: pointer; color: #aaa; background: none; border: none; }
+
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.form-grid .full { grid-column: 1 / -1; }
+
+label { display: block; font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+input[type=text], input[type=number], input[type=date], input[type=time], input[type=url],
+select, textarea {
+  width: 100%; padding: 9px 12px; border: 1.5px solid #d2d2d7; border-radius: 8px;
+  font-size: 13px; outline: none; transition: border-color .2s; font-family: inherit;
+}
+input:focus, select:focus, textarea:focus { border-color: #007aff; }
+textarea { resize: vertical; min-height: 80px; }
+
+.checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 4px; }
+.checkbox-row input[type=checkbox] { width: 16px; height: 16px; cursor: pointer; }
+
+.form-actions { display: flex; gap: 10px; margin-top: 20px; }
+
+.empty-state { text-align: center; padding: 40px; color: #86868b; font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🤖 Egolist Admin</h1>
+  <span class="sep">/</span><a href="/">Заявки</a>
+  <span class="sep">/</span><a href="/buttons">Кнопки</a>
+  <span class="sep">/</span><a href="/settings">Налаштування</a>
+  <span class="sep">/</span><a href="/prompt">AI Промт</a>
+  <span class="sep">/</span><a href="/chats">💬 Чати</a>
+  <span class="sep">/</span><a href="/analytics">📊 Аналітика</a>
+  <span class="sep">/</span><span style="color:white">📁 Контент</span>
+  <div style="margin-left:auto"><a href="/logout">Вийти</a></div>
+</div>
+
+<div class="container">
+
+  {% if msg %}
+  <div class="alert alert-{{ msg_type }}">{{ msg }}</div>
+  {% endif %}
+
+  <div class="tabs">
+    <button class="tab-btn {% if tab == 'places' %}active{% endif %}" onclick="showTab('places')">🏢 Заклади ({{ places|length }})</button>
+    <button class="tab-btn {% if tab == 'events' %}active{% endif %}" onclick="showTab('events')">🎉 Події ({{ events|length }})</button>
+  </div>
+
+  <!-- ── Places tab ── -->
+  <div id="tab-places" class="tab-content" style="display:{% if tab == 'places' %}block{% else %}none{% endif %}">
+    <div class="card">
+      <div class="card-header">
+        <h2>Заклади та виконавці</h2>
+        <button class="btn btn-blue" onclick="openPlaceModal()">+ Додати заклад</button>
+      </div>
+
+      {% if places %}
+      <table>
+        <thead>
+          <tr>
+            <th>Назва</th>
+            <th>Категорія</th>
+            <th>Ціна</th>
+            <th>Район</th>
+            <th>Теги</th>
+            <th>Статус</th>
+            <th>Дії</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in places %}
+          <tr>
+            <td class="name-cell">
+              {% if p.is_featured %}<span style="color:#ff9500" title="Featured">⭐</span> {% endif %}
+              {{ p.name }}
+            </td>
+            <td>{{ p.category or '—' }}</td>
+            <td>
+              {% if p.price_from %}від {{ p.price_from }} грн{% else %}—{% endif %}
+            </td>
+            <td>{{ p.district or '—' }}</td>
+            <td class="tag-cell">{{ p.tags or '—' }}</td>
+            <td>
+              {% if p.is_published %}
+                <span class="badge badge-green">✓ Активний</span>
+              {% else %}
+                <span class="badge badge-gray">Прихований</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="actions">
+                <button class="btn btn-gray"
+                  data-place="{{ p | tojson | e }}"
+                  onclick="openPlaceEdit(this)">✏️</button>
+                <form method="post" action="/content/places/{{ p.id }}/toggle" style="margin:0">
+                  <button type="submit" class="btn btn-orange" title="Вкл/Викл">👁</button>
+                </form>
+                <form method="post" action="/content/places/{{ p.id }}/delete" style="margin:0"
+                  onsubmit="return confirm('Видалити {{ p.name }}?')">
+                  <button type="submit" class="btn btn-red">🗑</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Немає закладів. Додай перший!</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ── Events tab ── -->
+  <div id="tab-events" class="tab-content" style="display:{% if tab == 'events' %}block{% else %}none{% endif %}">
+    <div class="card">
+      <div class="card-header">
+        <h2>Власні події</h2>
+        <button class="btn btn-blue" onclick="openEventModal()">+ Додати подію</button>
+      </div>
+
+      {% if events %}
+      <table>
+        <thead>
+          <tr>
+            <th>Назва</th>
+            <th>Категорія</th>
+            <th>Дата</th>
+            <th>Місце</th>
+            <th>Ціна</th>
+            <th>Статус</th>
+            <th>Дії</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in events %}
+          <tr>
+            <td class="name-cell">
+              {% if e.is_featured %}<span style="color:#ff9500">⭐</span> {% endif %}
+              {{ e.title }}
+            </td>
+            <td>{{ e.category or '—' }}</td>
+            <td>{{ e.date or '—' }}</td>
+            <td>{{ e.place_name or '—' }}</td>
+            <td>{{ e.price or '—' }}</td>
+            <td>
+              {% if e.is_published %}
+                <span class="badge badge-green">✓ Активна</span>
+              {% else %}
+                <span class="badge badge-gray">Прихована</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="actions">
+                <button class="btn btn-gray"
+                  data-event="{{ e | tojson | e }}"
+                  onclick="openEventEdit(this)">✏️</button>
+                <form method="post" action="/content/events/{{ e.id }}/toggle" style="margin:0">
+                  <button type="submit" class="btn btn-orange" title="Вкл/Викл">👁</button>
+                </form>
+                <form method="post" action="/content/events/{{ e.id }}/delete" style="margin:0"
+                  onsubmit="return confirm('Видалити {{ e.title }}?')">
+                  <button type="submit" class="btn btn-red">🗑</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="empty-state">Немає подій. Додай першу!</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Place Modal ── -->
+<div class="modal-overlay" id="placeModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('placeModal')">×</button>
+    <h3 id="placeModalTitle">Новий заклад</h3>
+    <form id="placeForm" method="post">
+      <div class="form-grid">
+        <div class="full">
+          <label>Назва *</label>
+          <input type="text" name="name" id="pName" required>
+        </div>
+        <div>
+          <label>Категорія</label>
+          <input type="text" name="category" id="pCategory" placeholder="Ресторан, Фотограф...">
+        </div>
+        <div>
+          <label>Район</label>
+          <input type="text" name="district" id="pDistrict" placeholder="Центр, Лівобережна...">
+        </div>
+        <div class="full">
+          <label>Опис</label>
+          <textarea name="description" id="pDescription" placeholder="Короткий опис закладу..."></textarea>
+        </div>
+        <div>
+          <label>Адреса</label>
+          <input type="text" name="address" id="pAddress">
+        </div>
+        <div>
+          <label>Місто</label>
+          <input type="text" name="city" id="pCity" value="Дніпро">
+        </div>
+        <div>
+          <label>Ціна від (грн)</label>
+          <input type="number" name="price_from" id="pPriceFrom" min="0">
+        </div>
+        <div>
+          <label>Ціна до (грн)</label>
+          <input type="number" name="price_to" id="pPriceTo" min="0">
+        </div>
+        <div>
+          <label>Для кого</label>
+          <input type="text" name="for_who" id="pForWho" placeholder="пари, компанії, діти...">
+        </div>
+        <div>
+          <label>Теги (через кому)</label>
+          <input type="text" name="tags" id="pTags" placeholder="романтика, вечірка...">
+        </div>
+        <div>
+          <label>Телефон</label>
+          <input type="text" name="phone" id="pPhone" placeholder="+380...">
+        </div>
+        <div>
+          <label>Instagram</label>
+          <input type="text" name="instagram" id="pInstagram" placeholder="@handle">
+        </div>
+        <div>
+          <label>Telegram</label>
+          <input type="text" name="telegram" id="pTelegram" placeholder="@handle">
+        </div>
+        <div>
+          <label>Сайт</label>
+          <input type="text" name="website" id="pWebsite">
+        </div>
+        <div class="full">
+          <label>Посилання на бронювання</label>
+          <input type="text" name="booking_url" id="pBookingUrl">
+        </div>
+        <div class="full">
+          <label>Фото URL</label>
+          <input type="url" name="photo_url" id="pPhotoUrl" placeholder="https://...">
+        </div>
+        <div>
+          <label>Пріоритет (0–100)</label>
+          <input type="number" name="priority" id="pPriority" value="0" min="0" max="100">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:18px">
+          <div class="checkbox-row">
+            <input type="checkbox" name="is_published" id="pPublished" checked>
+            <label for="pPublished" style="margin:0">Опубліковано</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" name="is_featured" id="pFeatured">
+            <label for="pFeatured" style="margin:0">⭐ Featured (показується першим)</label>
+          </div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-blue">💾 Зберегти</button>
+        <button type="button" class="btn btn-gray" onclick="closeModal('placeModal')">Скасувати</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Event Modal ── -->
+<div class="modal-overlay" id="eventModal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('eventModal')">×</button>
+    <h3 id="eventModalTitle">Нова подія</h3>
+    <form id="eventForm" method="post">
+      <div class="form-grid">
+        <div class="full">
+          <label>Назва *</label>
+          <input type="text" name="title" id="eTitle" required>
+        </div>
+        <div>
+          <label>Категорія</label>
+          <input type="text" name="category" id="eCategory" placeholder="концерт, виставка...">
+        </div>
+        <div>
+          <label>Місто</label>
+          <input type="text" name="city" id="eCity" value="Дніпро">
+        </div>
+        <div class="full">
+          <label>Опис</label>
+          <textarea name="description" id="eDescription"></textarea>
+        </div>
+        <div>
+          <label>Дата</label>
+          <input type="date" name="date" id="eDate">
+        </div>
+        <div>
+          <label>Час</label>
+          <input type="time" name="time" id="eTime">
+        </div>
+        <div>
+          <label>Ціна / вхід</label>
+          <input type="text" name="price" id="ePrice" placeholder="200 грн, безкоштовно...">
+        </div>
+        <div>
+          <label>Теги</label>
+          <input type="text" name="tags" id="eTags">
+        </div>
+        <div>
+          <label>Майданчик</label>
+          <input type="text" name="place_name" id="ePlaceName">
+        </div>
+        <div>
+          <label>Адреса</label>
+          <input type="text" name="place_address" id="ePlaceAddress">
+        </div>
+        <div class="full">
+          <label>Посилання на квитки</label>
+          <input type="text" name="ticket_url" id="eTicketUrl">
+        </div>
+        <div class="full">
+          <label>Фото URL</label>
+          <input type="url" name="photo_url" id="ePhotoUrl">
+        </div>
+        <div>
+          <label>Пріоритет (0–100)</label>
+          <input type="number" name="priority" id="ePriority" value="0" min="0" max="100">
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;padding-top:18px">
+          <div class="checkbox-row">
+            <input type="checkbox" name="is_published" id="ePublished" checked>
+            <label for="ePublished" style="margin:0">Опубліковано</label>
+          </div>
+          <div class="checkbox-row">
+            <input type="checkbox" name="is_featured" id="eFeatured">
+            <label for="eFeatured" style="margin:0">⭐ Featured (показується першим)</label>
+          </div>
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-blue">💾 Зберегти</button>
+        <button type="button" class="btn btn-gray" onclick="closeModal('eventModal')">Скасувати</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.getElementById('tab-' + name).style.display = 'block';
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.remove('open');
+}
+
+// ── Place modal ───────────────────────────────────────────────────────────
+function openPlaceModal() {
+  document.getElementById('placeModalTitle').textContent = 'Новий заклад';
+  document.getElementById('placeForm').action = '/content/places/add';
+  clearForm('placeForm');
+  document.getElementById('pPublished').checked = true;
+  document.getElementById('pCity').value = 'Дніпро';
+  document.getElementById('placeModal').classList.add('open');
+}
+
+function openPlaceEdit(btn) {
+  const p = JSON.parse(btn.dataset.place);
+  document.getElementById('placeModalTitle').textContent = 'Редагувати заклад';
+  document.getElementById('placeForm').action = `/content/places/${p.id}/edit`;
+  setVal('pName', p.name);
+  setVal('pCategory', p.category);
+  setVal('pDistrict', p.district);
+  setVal('pDescription', p.description);
+  setVal('pAddress', p.address);
+  setVal('pCity', p.city || 'Дніпро');
+  setVal('pPriceFrom', p.price_from);
+  setVal('pPriceTo', p.price_to);
+  setVal('pForWho', p.for_who);
+  setVal('pTags', p.tags);
+  setVal('pPhone', p.phone);
+  setVal('pInstagram', p.instagram);
+  setVal('pTelegram', p.telegram);
+  setVal('pWebsite', p.website);
+  setVal('pBookingUrl', p.booking_url);
+  setVal('pPhotoUrl', p.photo_url);
+  setVal('pPriority', p.priority ?? 0);
+  document.getElementById('pPublished').checked = !!p.is_published;
+  document.getElementById('pFeatured').checked = !!p.is_featured;
+  document.getElementById('placeModal').classList.add('open');
+}
+
+// ── Event modal ───────────────────────────────────────────────────────────
+function openEventModal() {
+  document.getElementById('eventModalTitle').textContent = 'Нова подія';
+  document.getElementById('eventForm').action = '/content/events/add';
+  clearForm('eventForm');
+  document.getElementById('ePublished').checked = true;
+  document.getElementById('eCity').value = 'Дніпро';
+  document.getElementById('eventModal').classList.add('open');
+}
+
+function openEventEdit(btn) {
+  const e = JSON.parse(btn.dataset.event);
+  document.getElementById('eventModalTitle').textContent = 'Редагувати подію';
+  document.getElementById('eventForm').action = `/content/events/${e.id}/edit`;
+  setVal('eTitle', e.title);
+  setVal('eCategory', e.category);
+  setVal('eCity', e.city || 'Дніпро');
+  setVal('eDescription', e.description);
+  setVal('eDate', e.date);
+  setVal('eTime', e.time ? e.time.substring(0,5) : '');
+  setVal('ePrice', e.price);
+  setVal('eTags', e.tags);
+  setVal('ePlaceName', e.place_name);
+  setVal('ePlaceAddress', e.place_address);
+  setVal('eTicketUrl', e.ticket_url);
+  setVal('ePhotoUrl', e.photo_url);
+  setVal('ePriority', e.priority ?? 0);
+  document.getElementById('ePublished').checked = !!e.is_published;
+  document.getElementById('eFeatured').checked = !!e.is_featured;
+  document.getElementById('eventModal').classList.add('open');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.tagName === 'TEXTAREA') el.value = val || '';
+  else el.value = val ?? '';
+}
+
+function clearForm(formId) {
+  document.getElementById(formId).querySelectorAll('input, textarea, select').forEach(el => {
+    if (el.type === 'checkbox') el.checked = false;
+    else el.value = '';
+  });
+}
+
+// Close on overlay click
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => { if (e.target === o) o.classList.remove('open'); });
+});
+</script>
+</body>
+</html>
