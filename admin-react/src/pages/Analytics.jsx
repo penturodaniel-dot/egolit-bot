@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAnalytics, syncKarabas, syncKino } from '../api.js';
+import { getAnalytics, syncKarabas, syncKino, syncEgolist } from '../api.js';
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -79,6 +79,8 @@ export default function Analytics() {
   const [syncMsg, setSyncMsg] = useState('');
   const [kinoSyncing, setKinoSyncing] = useState(false);
   const [kinoSyncMsg, setKinoSyncMsg] = useState('');
+  const [egolistSyncing, setEgolistSyncing] = useState(false);
+  const [egolistSyncMsg, setEgolistSyncMsg] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -113,6 +115,18 @@ export default function Analytics() {
     }
   };
 
+  const handleEgolistSync = async () => {
+    setEgolistSyncing(true); setEgolistSyncMsg('');
+    try {
+      await syncEgolist();
+      setEgolistSyncMsg('✅ Синхронізацію розпочато — виконавці оновляться за ~3 хв');
+    } catch (e) {
+      setEgolistSyncMsg(`❌ Помилка: ${e.message}`);
+    } finally {
+      setEgolistSyncing(false);
+    }
+  };
+
   // Map API response to display values
   const users   = data?.users   || {};
   const msgs    = data?.messages || {};
@@ -123,6 +137,7 @@ export default function Analytics() {
   const conversion = data?.conversion ?? 0;
   const eventsActive = data?.events_active ?? 0;
   const kinoActive = data?.kino_active ?? 0;
+  const egolistActive = data?.egolist_active ?? 0;
   const leadsByCat = data?.leads_by_category || [];
   const maxLeadCat = leadsByCat.length ? Math.max(...leadsByCat.map(c => c.count), 1) : 1;
 
@@ -148,6 +163,13 @@ export default function Analytics() {
               {kinoSyncing ? 'Синхронізація...' : 'Оновити кіно'}
             </button>
             {kinoSyncMsg && <span style={{ fontSize: 13, color: kinoSyncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{kinoSyncMsg}</span>}
+            <button className="btn-primary" onClick={handleEgolistSync} disabled={egolistSyncing} style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+              </svg>
+              {egolistSyncing ? 'Синхронізація...' : 'Оновити виконавців'}
+            </button>
+            {egolistSyncMsg && <span style={{ fontSize: 13, color: egolistSyncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{egolistSyncMsg}</span>}
           </div>
           <button className="btn-primary" onClick={load} disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -195,6 +217,7 @@ export default function Analytics() {
               <StatCard label="Конверсія"       value={`${conversion}%`} sub="заявок від діалогів" accent color="var(--accent2)" />
               <StatCard label="Активних афіш"   value={eventsActive}  sub="Karabas" />
               <StatCard label="Фільмів у кіно"  value={kinoActive}    sub="kino-teatr.ua" accent color="#7c3aed" />
+              <StatCard label="Виконавців в БД" value={egolistActive} sub="Egolist (Дніпро)" accent color="#0ea5e9" />
             </div>
 
             {/* Charts */}

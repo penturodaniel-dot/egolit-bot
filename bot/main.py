@@ -15,6 +15,7 @@ from db.menu_buttons import init_menu_buttons
 from db.chat import init_chat_tables
 from db.content import init_content_tables
 from scrapers.karabas import init_karabas_events
+from scrapers.egolist import init_egolist_products
 from bot.menu_cache import reload_buttons
 from bot.middleware import ChatPersistenceMiddleware
 from bot.handlers import start, search, lead
@@ -62,6 +63,8 @@ async def on_startup():
     logger.info("Content tables ready.")
     await init_karabas_events()
     logger.info("Karabas events table ready.")
+    await init_egolist_products()
+    logger.info("Egolist products table ready.")
     me = await bot.get_me()
     logger.info(f"Bot started: @{me.username}")
 

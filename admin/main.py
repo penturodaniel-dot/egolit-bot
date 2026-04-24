@@ -40,6 +40,7 @@ from db.chat import (
 )
 from scrapers.karabas import scrape_all as karabas_scrape_all
 from scrapers.kino_teatr import scrape_all as kino_scrape_all, init_kino_events
+from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
 from db.menu_buttons import (
     load_all_buttons, get_button,
     create_button, update_button, toggle_button, delete_button,
@@ -395,6 +396,7 @@ async def _nightly_karabas_loop():
 
 
 _kino_logger = logging.getLogger("kino.scheduler")
+_egolist_logger = logging.getLogger("egolist.scheduler")
 
 
 async def _nightly_kino_loop():
@@ -418,6 +420,27 @@ async def _nightly_kino_loop():
             await asyncio.sleep(3600)
 
 
+async def _nightly_egolist_loop():
+    """Run Egolist performers/venues scrape every night at 01:00 local time."""
+    while True:
+        try:
+            now = datetime.now()
+            tomorrow = (now + timedelta(days=1)).replace(
+                hour=1, minute=0, second=0, microsecond=0
+            )
+            sleep_secs = (tomorrow - now).total_seconds()
+            _egolist_logger.info("Next Egolist scrape in %.1fh", sleep_secs / 3600)
+            await asyncio.sleep(sleep_secs)
+            _egolist_logger.info("Starting nightly Egolist scrape…")
+            stats = await egolist_scrape_all()
+            _egolist_logger.info("Nightly Egolist scrape done: %s", stats)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            _egolist_logger.exception("Nightly Egolist scrape failed")
+            await asyncio.sleep(3600)
+
+
 @app.on_event("startup")
 async def on_startup():
     await db_init_settings()
@@ -425,8 +448,10 @@ async def on_startup():
     await init_chat_tables()
     await init_content_tables()
     await init_kino_events()
+    await init_egolist_products()
     asyncio.create_task(_nightly_karabas_loop())
     asyncio.create_task(_nightly_kino_loop())
+    asyncio.create_task(_nightly_egolist_loop())
     # Ensure new lead columns exist (safe migration)
     try:
         db = await get_db()
@@ -597,6 +622,23 @@ async def api_sync_kino(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_kino_bg)
     return JSONResponse({"ok": True, "status": "started", "new": 0, "updated": 0, "total_active": 0})
+
+
+async def _run_egolist_bg():
+    try:
+        stats = await egolist_scrape_all()
+        _egolist_logger.info("Manual Egolist sync done: %s", stats)
+    except Exception:
+        _egolist_logger.exception("Manual Egolist sync failed")
+
+
+@app.post("/api/sync-egolist")
+async def api_sync_egolist(request: Request, background_tasks: BackgroundTasks):
+    """Start Egolist performers/venues scrape in background."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    background_tasks.add_task(_run_egolist_bg)
+    return JSONResponse({"ok": True, "status": "started"})
 
 
 @app.post("/sync-events")
@@ -1029,6 +1071,13 @@ async def api_analytics(request: Request):
     except Exception:
         pass
 
+    # Egolist products count
+    egolist_count = 0
+    try:
+        egolist_count = await db.fetchval("SELECT COUNT(*) FROM egolist_products WHERE is_active=TRUE") or 0
+    except Exception:
+        pass
+
     # Leads by category
     leads_by_cat = []
     try:
@@ -1074,6 +1123,7 @@ async def api_analytics(request: Request):
         "handoffs": int(handoffs),
         "events_active": int(events_count),
         "kino_active": int(kino_count),
+        "egolist_active": int(egolist_count),
         "conversion": conversion,
         "leads_by_category": leads_by_cat,
         "charts": {

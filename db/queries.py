@@ -3,7 +3,6 @@ from typing import Optional
 from db.connection import get_pool
 from config import settings
 from db.content import search_bot_places, search_bot_events_active
-from db.egolist_api import search_products_api
 
 
 @dataclass
@@ -68,23 +67,99 @@ async def _ensure_trgm() -> bool:
 async def search_products(
     category_names: list[str] | None = None,
     category_ids: list[int] | None = None,  # deprecated, ignored
-    city_id: int | None = None,              # deprecated, ignored (always Dnipro via API)
+    city_id: int | None = None,              # deprecated, ignored
     max_price: int | None = None,
     search_text: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[ProductResult]:
-    """Search products via Egolist public API (api.egolist.ua).
-    category_ids and city_id are kept for backward compat but ignored.
+    """Search performers/venues from local egolist_products table (synced from API).
+    Falls back to empty list if table not yet populated.
     """
-    # ── Egolist public API ────────────────────────────────────────────────
-    results = await search_products_api(
-        category_names=category_names or [],
-        max_price=max_price,
-        search_text=search_text,
-        limit=limit,
-        offset=offset,
-    )
+    pool = await get_pool()
+
+    # Check table exists and has data
+    try:
+        exists = await pool.fetchval(
+            "SELECT 1 FROM information_schema.tables WHERE table_name='egolist_products'"
+        )
+        if not exists:
+            return []
+    except Exception:
+        return []
+
+    params: list = []
+    where = ["is_active = TRUE"]
+
+    # Filter by category names
+    if category_names:
+        base = len(params)
+        cat_conds = " OR ".join(
+            f"category_name ILIKE ${base + i + 1}" for i in range(len(category_names))
+        )
+        params.extend(f"%{n}%" for n in category_names)
+        where.append(f"({cat_conds})")
+
+    if max_price:
+        params.append(max_price)
+        where.append(f"(price IS NULL OR price <= ${len(params)})")
+
+    order_by = "is_top DESC, scraped_at DESC"
+
+    if search_text:
+        trgm = await _ensure_trgm()
+        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
+        base = len(params)
+        word_conds = " OR ".join(
+            f"(name ILIKE ${base + i + 1} OR COALESCE(description,'') ILIKE ${base + i + 1})"
+            for i in range(len(words))
+        )
+        params.extend(f"%{w}%" for w in words)
+
+        if trgm:
+            trgm_idx = len(params) + 1
+            where.append(f"({word_conds} OR similarity(name, ${trgm_idx}) > 0.2)")
+            params.append(search_text)
+            order_by = f"similarity(name, ${trgm_idx}) DESC, is_top DESC"
+        else:
+            where.append(f"({word_conds})")
+
+    where_sql = " AND ".join(where)
+    limit_idx = len(params) + 1
+    offset_idx = len(params) + 2
+    params += [limit, offset]
+
+    try:
+        rows = await pool.fetch(f"""
+            SELECT api_id, name, description, category_name, city,
+                   price, phone, instagram, telegram, website,
+                   photo_url, product_url, is_top
+            FROM egolist_products
+            WHERE {where_sql}
+            ORDER BY {order_by}
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
+        """, *params)
+    except Exception:
+        rows = []
+
+    results: list[ProductResult] = [
+        ProductResult(
+            id=abs(hash(r["api_id"])) % 2_000_000_000,
+            name=r["name"],
+            description=(r["description"] or "")[:300],
+            category=r["category_name"] or "",
+            city=r["city"] or "Дніпро",
+            price=r["price"],
+            phone=r["phone"],
+            instagram=r["instagram"],
+            website=r["website"],
+            telegram_contact=r["telegram"],
+            photo_url=r["photo_url"],
+            is_top=bool(r["is_top"]),
+            product_url=r["product_url"],
+        )
+        for r in rows
+    ]
 
     # ── Bot-managed places (featured shown first) ─────────────────────────
     try:

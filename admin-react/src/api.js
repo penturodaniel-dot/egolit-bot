@@ -154,3 +154,7 @@ export const syncKarabas = () =>
 // Kino-teatr sync
 export const syncKino = () =>
   request('POST', '/sync-kino');
+
+// Egolist performers/venues sync
+export const syncEgolist = () =>
+  request('POST', '/sync-egolist');
