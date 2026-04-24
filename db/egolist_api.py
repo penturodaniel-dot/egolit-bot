@@ -6,6 +6,7 @@ API: https://api.egolist.ua/api/
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional, TYPE_CHECKING
 
 import httpx
@@ -204,8 +205,9 @@ async def search_products_api(
     if max_price and results:
         results = [p for p in results if p.price is None or p.price <= max_price]
 
-    # Клієнтська фільтрація по тексту (якщо API не відфільтрував)
-    if search_text and results:
+    # Клієнтська фільтрація по тексту — тільки для загального пошуку (без категорій)
+    # Якщо категорії вказані, API вже відфільтрував релевантні результати
+    if search_text and results and not uuids:
         st = search_text.lower()
         filtered = [
             p for p in results
@@ -304,7 +306,7 @@ def _parse_products(items: list[dict]) -> list["ProductResult"]:
         product_url = f"https://egolist.ua/products/{slug}" if slug else None
 
         is_top = bool(item.get("is_top") or item.get("is_recommended"))
-        desc = (item.get("description") or "").strip()
+        desc = _strip_html((item.get("description") or "").strip())
 
         results.append(ProductResult(
             id=item_id,
@@ -322,6 +324,21 @@ def _parse_products(items: list[dict]) -> list["ProductResult"]:
             product_url=product_url,
         ))
     return results
+
+
+def _strip_html(text: str) -> str:
+    """Remove HTML tags from text so Telegram HTML parse_mode doesn't choke."""
+    if not text:
+        return text
+    # Replace block-level tags with newlines for readability
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</p>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'</li>', '\n', text, flags=re.IGNORECASE)
+    # Strip all remaining tags
+    text = re.sub(r'<[^>]+>', '', text)
+    # Collapse multiple blank lines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
 
 
 def _first(*values) -> Optional[str]:
