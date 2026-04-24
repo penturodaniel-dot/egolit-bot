@@ -158,11 +158,10 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     messages.append({"role": "user", "content": user_text})
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         messages=messages,
         response_format={"type": "json_object"},
-        temperature=0.1,
-        max_tokens=300,
+        max_completion_tokens=300,
     )
 
     raw = response.choices[0].message.content

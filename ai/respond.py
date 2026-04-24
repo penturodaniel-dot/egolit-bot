@@ -44,13 +44,12 @@ async def format_intro(
         task = f'Запит: "{user_query}". Нічого не знайдено. Напиши одне речення про це.'
 
     response = await client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-5-mini",
         messages=[
             {"role": "system", "content": INTRO_PROMPT},
             {"role": "user", "content": task},
         ],
-        temperature=0.4,
-        max_tokens=80,
+        max_completion_tokens=80,
     )
     return response.choices[0].message.content
 
@@ -93,13 +92,12 @@ async def generate_match_reasons(
 
     try:
         response = await client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": REASONS_PROMPT},
                 {"role": "user", "content": task},
             ],
-            temperature=0.5,
-            max_tokens=400,
+            max_completion_tokens=400,
         )
         raw = response.choices[0].message.content.strip()
         reasons = json.loads(raw)
