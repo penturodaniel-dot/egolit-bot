@@ -92,6 +92,12 @@ async def search_products(
     except Exception:
         return []
 
+    # Safety net: if no category AND no search_text → don't return everything.
+    # This prevents the "random photographers" fallback when AI can't classify
+    # the query (e.g. off-topic requests like "кальян" or "доставка").
+    if not category_names and not search_text:
+        return []
+
     params: list = []
     where = ["is_active = TRUE"]
 
