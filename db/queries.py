@@ -38,6 +38,7 @@ class EventResult:
     city: str
     photo_url: Optional[str]
     source_url: Optional[str] = None
+    cloudinary_url: Optional[str] = None
 
 
 def _media_url(uuid_str: str, name: str) -> str:
@@ -284,7 +285,7 @@ async def _search_egolist_events(
     try:
         rows = await pool.fetch(f"""
             SELECT id, title, description, date::text, time::text,
-                   price, place_name, image_url, source_url, event_type
+                   price, place_name, image_url, cloudinary_url, source_url, event_type
             FROM egolist_events
             WHERE {where_sql}
             ORDER BY {order_by}
@@ -305,8 +306,9 @@ async def _search_egolist_events(
             place_name=r["place_name"],
             place_address="Дніпро",
             city="Дніпро",
-            photo_url=r["image_url"],
+            photo_url=r["cloudinary_url"] or r["image_url"],
             source_url=r["source_url"],
+            cloudinary_url=r["cloudinary_url"],
         )
         for r in rows
     ]
