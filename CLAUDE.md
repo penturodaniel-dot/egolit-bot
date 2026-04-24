@@ -5,7 +5,8 @@
 - **Bot framework**: aiogram 3
 - **DB**: PostgreSQL via asyncpg + `pg_trgm` extension (fuzzy search for events)
 - **Admin panel**: FastAPI + React SPA (pre-built dist committed to repo)
-- **AI**: OpenAI gpt-4o-mini (intent parse + intro text + match reasons)
+- **AI**: Pluggable provider (OpenAI / Groq / OpenRouter) — switch via ENV.
+  Default: `gpt-5-mini`. All use OpenAI-compatible `/chat/completions` API.
 - **HTTP scraping**: httpx + BeautifulSoup4
 - **Product & events search**: Egolist public API (`api.egolist.ua`) — no DB credentials needed
 - **Image hosting**: Cloudinary (folder `egolist-events/`) — for event photos
@@ -51,6 +52,7 @@ egolist-bot/
 │   ├── chat.py               # CRM: chat_sessions, chat_messages, quick_replies
 │   └── content.py            # bot_places, bot_events CRUD + search functions
 ├── ai/
+│   ├── client.py             # Provider-agnostic OpenAI-compatible client (OpenAI/Groq/OpenRouter)
 │   ├── parse.py              # ParsedIntent — AI parses user query; category_names (not IDs)
 │   └── respond.py            # format_intro() + generate_match_reasons()
 ├── scrapers/
@@ -209,6 +211,42 @@ egolist-bot/
 - Direction: `in` (from user) / `out` (from admin/bot)
 - Read status: **`is_read`** (BOOLEAN, default FALSE)
 
+## AI provider system (pluggable)
+- **File**: `ai/client.py` — single `AsyncOpenAI` client built from env vars.
+- **Switching**: change ENV, no code changes needed.
+  - `AI_PROVIDER` = `openai` | `groq` | `openrouter`
+  - `AI_MODEL` = model name (e.g. `gpt-5-mini`, `llama-3.3-70b-versatile`, `anthropic/claude-haiku-4.5`)
+  - `GROQ_API_KEY`, `OPENROUTER_API_KEY` — provider keys (OpenAI uses existing `OPENAI_API_KEY`)
+- **Auto-detects reasoning models** (gpt-5, o1/o3/o4) via `_is_reasoning_model()`:
+  - Reasoning models → `max_completion_tokens` + `reasoning_effort="minimal"` (no `temperature`)
+  - Regular models → `max_tokens` + `temperature` (Groq Llama, Claude, Gemini)
+- **`build_completion_params(max_tokens, temperature, json_mode)`** returns the right kwargs
+  per the active model. `parse.py` and `respond.py` both call it.
+- **Fallback**: if provider key is missing → falls back to `OPENAI_API_KEY`.
+- **Current defaults**: `AI_PROVIDER=openai`, `AI_MODEL=gpt-5-mini`.
+
+### Switching to Groq free tier
+```
+AI_PROVIDER=groq
+AI_MODEL=llama-3.3-70b-versatile
+GROQ_API_KEY=gsk_...
+```
+Free tier limits: 30 req/min, ~1000 req/day (enough for ~250 users × 3–4 queries/day if carefully split).
+Groq shows a "projected cost" dashboard — it's $0 until you actively upgrade to billing.
+
+### Switching to OpenRouter (access to 400+ models)
+```
+AI_PROVIDER=openrouter
+AI_MODEL=google/gemini-2.5-flash   # or anthropic/claude-haiku-4.5, deepseek/deepseek-chat, etc.
+OPENROUTER_API_KEY=sk-or-...
+```
+
+### gpt-5 reasoning token gotcha
+gpt-5-mini consumes `max_completion_tokens` for BOTH reasoning and output. If the limit
+is too low (e.g. 80), reasoning eats the whole budget → empty response → Telegram
+"message text is empty" crash. Solution applied: `reasoning_effort="minimal"` + higher
+token limits (200/600/800) + empty-response fallbacks in all 3 callers.
+
 ## AI prompt architecture
 - `BASE_PROMPT_TEXT` — module-level constant in `ai/parse.py`
 - `_build_system_prompt(extra)` — formats categories + appends admin extra instructions
@@ -273,11 +311,23 @@ Bot falls back to `image_url` but Telegram's fetch also fails → event cards se
   (but gorod.dp.ua still blocks non-UA IPs — see "Known issues")
 - **Karabas + kino scrapers removed** — consolidated into single `egolist_events` scraper using
   Egolist's own event API (6 categories, city_slug works server-side)
+- **AI returned photographers for off-topic/unknown queries** — root cause: empty `category_names`
+  from AI made `search_products` return all products sorted by `is_top` (photographers first).
+  Fix: (a) safety net in `search_products` returns `[]` when both `category_names` and `search_text`
+  are empty; (b) AI prompt updated with "other" intent + polite "contact manager" message.
+- **AI didn't map Russian synonyms to Ukrainian categories** — "парикмахер", "свадьба", "ресторан"
+  all fell through to "other". Fix: added СИНОНІМИ ТА ПЕРЕКЛАД section in `ai/parse.py`
+  with 20+ rus→ukr mappings and explicit multi-category instruction for compound queries
+  (свадьба → ведучі+музиканти+фото+ресторани+місця для весіль). Added 9 concrete examples.
+- **gpt-5-mini empty responses** — reasoning tokens ate full `max_completion_tokens` budget.
+  Fix: `reasoning_effort="minimal"` + higher token limits + empty-response fallbacks.
+- **AI provider lock-in** — was hardcoded to OpenAI. Now pluggable via `ai/client.py` +
+  env vars. Switch between OpenAI, Groq, OpenRouter without code changes.
 
 ## Environment variables (.env)
 ```
 BOT_TOKEN=...
-OPENAI_API_KEY=...
+OPENAI_API_KEY=...              # Always keep — used as AI fallback even on Groq/OpenRouter
 DB_HOST=nozomi.proxy.rlwy.net
 DB_PORT=33189
 DB_NAME=railway
@@ -289,6 +339,12 @@ MANAGER_TELEGRAM_ID=0
 CLOUDINARY_CLOUD_NAME=dqwsfvuon
 CLOUDINARY_API_KEY=...
 CLOUDINARY_API_SECRET=...
+
+# AI provider switching (optional — defaults to OpenAI gpt-5-mini)
+AI_PROVIDER=openai               # openai | groq | openrouter
+AI_MODEL=gpt-5-mini              # or llama-3.3-70b-versatile, anthropic/claude-haiku-4.5, etc.
+GROQ_API_KEY=gsk_...             # only if AI_PROVIDER=groq
+OPENROUTER_API_KEY=sk-or-...     # only if AI_PROVIDER=openrouter
 ```
 
 ## Railway deploy workflow
