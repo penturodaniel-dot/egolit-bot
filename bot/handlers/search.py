@@ -1,7 +1,8 @@
 import asyncio
 
+import httpx
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, URLInputFile
+from aiogram.types import Message, CallbackQuery, URLInputFile, BufferedInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
@@ -18,6 +19,26 @@ router = Router()
 
 # Telegram caption limit
 CAPTION_LIMIT = 1024
+
+
+async def _fetch_image_bytes(url: str) -> bytes | None:
+    """Download image bytes via httpx (handles sites that block Telegram's fetch)."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=10,
+            follow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Referer": "https://gorod.dp.ua/",
+            },
+        ) as client:
+            resp = await client.get(url)
+            ct = resp.headers.get("content-type", "")
+            if resp.status_code == 200 and "image" in ct:
+                return resp.content
+    except Exception:
+        pass
+    return None
 
 
 def _card_keyboard(
@@ -40,9 +61,11 @@ def _product_contact_keyboard(
 ) -> InlineKeyboardMarkup | None:
     """Build contact keyboard for a product: best available URL-based contact.
     Phone is shown in card text — tel: links are not supported by Telegram inline buttons.
-    Priority: Telegram > Instagram > Website.
+    Priority: Детальніше (product_url) > Telegram > Instagram > Website.
     """
     rows = []
+    if p.product_url:
+        rows.append([InlineKeyboardButton(text="🔗 Детальніше", url=p.product_url)])
     if p.telegram_contact:
         handle = p.telegram_contact.lstrip("@")
         rows.append([InlineKeyboardButton(text="💬 Написати в Telegram", url=f"https://t.me/{handle}")])
@@ -147,10 +170,12 @@ async def _send_event_card(
 
     if event.photo_url:
         try:
+            img_bytes = await _fetch_image_bytes(event.photo_url)
+            photo = BufferedInputFile(img_bytes, filename="photo.jpg") if img_bytes else URLInputFile(event.photo_url)
             caption = card_text[:CAPTION_LIMIT]
             await bot.send_photo(
                 chat_id=message.chat.id,
-                photo=URLInputFile(event.photo_url),
+                photo=photo,
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=reply_markup,
@@ -223,7 +248,7 @@ async def _send_results(
             await bot.send_chat_action(message.chat.id, "upload_photo")
             is_last = i == len(events)
             more = results_keyboard(has_more=has_more) if is_last else None
-            markup = _card_keyboard(e.source_url, "🎟 Купити квиток", more)
+            markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
             reason = reasons[i - 1] if i <= len(reasons) else ""
             await _send_event_card(message, bot, e, i, reply_markup=markup, reason=reason)
             if progress_msg and is_last:
@@ -433,5 +458,5 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         for i, e in enumerate(events, 1):
             is_last = i == len(events)
             more = results_keyboard(has_more=True) if is_last else None
-            markup = _card_keyboard(e.source_url, "🎟 Купити квиток", more)
+            markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
             await _send_event_card(callback.message, bot, e, i, reply_markup=markup)
