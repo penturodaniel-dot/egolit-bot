@@ -59,22 +59,28 @@ async def init_egolist_products() -> None:
 
 # ── Main entry ────────────────────────────────────────────────────────────────
 
-async def scrape_all() -> dict:
+async def scrape_all(progress_cb=None) -> dict:
     """Scrape all 47 categories and sync Dnipro products to egolist_products."""
     await init_egolist_products()
 
     totals = {"new": 0, "updated": 0, "errors": 0, "skipped_city": 0}
     seen_ids: set[str] = set()
     sem = asyncio.Semaphore(CONCURRENCY)
+    total_cats = len(CATEGORIES)
+    done_count = 0
 
     async with httpx.AsyncClient(
         headers=HEADERS, timeout=20, follow_redirects=True
     ) as client:
-        tasks = []
-        for cat_name, cat_uuid in CATEGORIES.items():
-            tasks.append(_scrape_category(client, sem, cat_name, cat_uuid, totals, seen_ids))
+        async def _tracked(cat_name, cat_uuid):
+            nonlocal done_count
+            await _scrape_category(client, sem, cat_name, cat_uuid, totals, seen_ids)
+            done_count += 1
+            if progress_cb:
+                await progress_cb(done_count, total_cats,
+                                  f"Категорія {done_count}/{total_cats}: {cat_name}")
 
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*[_tracked(k, v) for k, v in CATEGORIES.items()])
 
     # Deactivate products not seen in this scrape
     pool = await get_pool()

@@ -158,3 +158,7 @@ export const syncKino = () =>
 // Egolist performers/venues sync
 export const syncEgolist = () =>
   request('POST', '/sync-egolist');
+
+// Sync job status (progress tracking)
+export const getSyncStatus = () =>
+  request('GET', '/sync-status');

@@ -58,7 +58,7 @@ async def init_kino_events() -> None:
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-async def scrape_all() -> dict:
+async def scrape_all(progress_cb=None) -> dict:
     await init_kino_events()
     totals = {"new": 0, "updated": 0, "errors": 0}
     seen_urls: set[str] = set()
@@ -68,18 +68,29 @@ async def scrape_all() -> dict:
     ) as client:
         films = await _fetch_films(client)
         logger.info(f"kino-teatr: fetched {len(films)} films for Dnipro")
+        total_films = len(films) or 1
+
+        if progress_cb:
+            await progress_cb(0, total_films, f"Знайдено {len(films)} фільмів, обробляємо…")
 
         # Process all films in parallel (max 10 concurrent)
         sem = asyncio.Semaphore(10)
+        done_count = 0
 
         async def _safe_process(film):
+            nonlocal done_count
             async with sem:
                 try:
-                    return await _process_film(client, film)
+                    result = await _process_film(client, film)
                 except Exception as e:
                     title = film.get("title") or film.get("name") or "?"
                     logger.warning(f"kino-teatr film '{title}' error: {e}")
-                    return 0, 0, None
+                    result = 0, 0, None
+                done_count += 1
+                if progress_cb:
+                    await progress_cb(done_count, total_films,
+                                      f"Фільм {done_count}/{total_films}")
+                return result
 
         results = await asyncio.gather(*[_safe_process(f) for f in films])
         for n, u, url in results:

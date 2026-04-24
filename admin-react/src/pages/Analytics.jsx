@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAnalytics, syncKarabas, syncKino, syncEgolist } from '../api.js';
+import { getAnalytics, syncKarabas, syncKino, syncEgolist, getSyncStatus } from '../api.js';
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -34,7 +34,7 @@ function drawBarChart(canvas, labels, values, color = '#ff6b35') {
     ctx.beginPath(); ctx.roundRect(x, y, barW, barH, [4, 4, 0, 0]); ctx.fill();
     if (labels[i]) {
       ctx.fillStyle = '#94a3b8'; ctx.font = '10px system-ui'; ctx.textAlign = 'center';
-      ctx.fillText(String(labels[i]).slice(5), x + barW / 2, H - 8); // show MM-DD
+      ctx.fillText(String(labels[i]).slice(5), x + barW / 2, H - 8);
     }
   });
 }
@@ -71,16 +71,102 @@ function ProgressBar({ label, value, max, color = '#ff6b35' }) {
   );
 }
 
+function formatEta(seconds) {
+  if (!seconds || seconds <= 0) return null;
+  if (seconds < 60) return `~${seconds} сек`;
+  const m = Math.ceil(seconds / 60);
+  return `~${m} хв`;
+}
+
+function SyncCard({ name, label, color, icon, job, onSync }) {
+  const status = job?.status || 'idle';
+  const pct = job?.progress || 0;
+  const message = job?.message || '';
+  const eta = job?.eta;
+  const stats = job?.stats;
+  const isRunning = status === 'running';
+  const isDone = status === 'done';
+  const isError = status === 'error';
+
+  const statusColor = isRunning ? color : isDone ? '#10b981' : isError ? '#dc2626' : '#94a3b8';
+  const statusText = isRunning ? 'Оновлення...' : isDone ? 'Готово' : isError ? 'Помилка' : 'Очікування';
+
+  return (
+    <div className="sync-card card" style={{ borderTop: `3px solid ${statusColor}` }}>
+      <div className="sync-card-header">
+        <div className="sync-card-title">
+          <span className="sync-card-icon">{icon}</span>
+          <span>{label}</span>
+        </div>
+        <button
+          className="btn-primary btn-sm"
+          onClick={onSync}
+          disabled={isRunning}
+          style={{ background: isRunning ? '#94a3b8' : `linear-gradient(135deg,${color},${color}cc)`, padding: '5px 12px', fontSize: 12 }}
+        >
+          {isRunning ? (
+            <>
+              <span className="spinner-xs" />
+              Оновлення...
+            </>
+          ) : 'Оновити'}
+        </button>
+      </div>
+
+      {/* Progress bar — always visible, shows 0 when idle */}
+      <div className="sync-progress-track">
+        <div
+          className="sync-progress-fill"
+          style={{
+            width: `${pct}%`,
+            background: isError
+              ? '#dc2626'
+              : isDone
+              ? '#10b981'
+              : `linear-gradient(90deg,${color},${color}bb)`,
+            transition: isRunning ? 'width 0.6s ease' : 'none',
+          }}
+        />
+      </div>
+
+      <div className="sync-card-footer">
+        <div className="sync-status-row">
+          <span className="sync-dot" style={{ background: statusColor }} />
+          <span className="sync-status-text" style={{ color: statusColor }}>{statusText}</span>
+          {isRunning && <span className="sync-pct">{pct}%</span>}
+          {isRunning && eta && <span className="sync-eta">Залишилось {formatEta(eta)}</span>}
+        </div>
+
+        {isRunning && message && (
+          <div className="sync-message">{message}</div>
+        )}
+
+        {isDone && stats && (
+          <div className="sync-stats">
+            {stats.new != null && <span>+{stats.new} нових</span>}
+            {stats.updated != null && <span>{stats.updated} оновлено</span>}
+            {stats.total_active != null && <span>{stats.total_active} активних</span>}
+          </div>
+        )}
+
+        {isError && stats?.error && (
+          <div className="sync-message sync-message-error">{stats.error}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Analytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState('');
-  const [kinoSyncing, setKinoSyncing] = useState(false);
-  const [kinoSyncMsg, setKinoSyncMsg] = useState('');
-  const [egolistSyncing, setEgolistSyncing] = useState(false);
-  const [egolistSyncMsg, setEgolistSyncMsg] = useState('');
+  const [syncJobs, setSyncJobs] = useState({
+    karabas: { status: 'idle', progress: 0, message: '', eta: null, stats: null },
+    kino:    { status: 'idle', progress: 0, message: '', eta: null, stats: null },
+    egolist: { status: 'idle', progress: 0, message: '', eta: null, stats: null },
+  });
+  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -91,43 +177,49 @@ export default function Analytics() {
 
   useEffect(() => { load(); }, [load]);
 
-  const handleSync = async () => {
-    setSyncing(true); setSyncMsg('');
+  // Poll sync status when any job is running
+  useEffect(() => {
+    const anyRunning = Object.values(syncJobs).some(j => j.status === 'running');
+
+    if (anyRunning) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const status = await getSyncStatus();
+          setSyncJobs(prev => {
+            const next = { ...prev };
+            for (const key of ['karabas', 'kino', 'egolist']) {
+              if (status[key]) next[key] = status[key];
+            }
+            return next;
+          });
+          // If a job just finished, reload analytics to update counts
+          const justDone = Object.values(status).some(j => j.status === 'done');
+          if (justDone && !Object.values(status).some(j => j.status === 'running')) {
+            load();
+          }
+        } catch { /* ignore polling errors */ }
+      }, 1500);
+    } else {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [syncJobs, load]);
+
+  const handleSync = async (key, apiFn) => {
+    setSyncJobs(prev => ({ ...prev, [key]: { ...prev[key], status: 'running', progress: 0, message: 'Запуск...', eta: null, stats: null } }));
     try {
-      await syncKarabas();
-      setSyncMsg('✅ Синхронізацію розпочато — афіші оновляться за ~1 хв');
+      await apiFn();
     } catch (e) {
-      setSyncMsg(`❌ Помилка: ${e.message}`);
-    } finally {
-      setSyncing(false);
+      setSyncJobs(prev => ({ ...prev, [key]: { ...prev[key], status: 'error', stats: { error: e.message } } }));
     }
   };
 
-  const handleKinoSync = async () => {
-    setKinoSyncing(true); setKinoSyncMsg('');
-    try {
-      await syncKino();
-      setKinoSyncMsg('✅ Синхронізацію розпочато — фільми оновляться за ~1 хв');
-    } catch (e) {
-      setKinoSyncMsg(`❌ Помилка: ${e.message}`);
-    } finally {
-      setKinoSyncing(false);
-    }
-  };
-
-  const handleEgolistSync = async () => {
-    setEgolistSyncing(true); setEgolistSyncMsg('');
-    try {
-      await syncEgolist();
-      setEgolistSyncMsg('✅ Синхронізацію розпочато — виконавці оновляться за ~3 хв');
-    } catch (e) {
-      setEgolistSyncMsg(`❌ Помилка: ${e.message}`);
-    } finally {
-      setEgolistSyncing(false);
-    }
-  };
-
-  // Map API response to display values
   const users   = data?.users   || {};
   const msgs    = data?.messages || {};
   const leads   = data?.leads   || {};
@@ -146,31 +238,37 @@ export default function Analytics() {
       <Header title="Аналітика" subtitle="Statistics" />
       <div className="page-content">
 
+        {/* Sync cards */}
+        <div className="section-label">Синхронізація даних</div>
+        <div className="sync-cards-row" style={{ marginBottom: 28 }}>
+          <SyncCard
+            name="karabas"
+            label="Karabas.com"
+            color="#10b981"
+            icon="🎭"
+            job={syncJobs.karabas}
+            onSync={() => handleSync('karabas', syncKarabas)}
+          />
+          <SyncCard
+            name="kino"
+            label="Кіно-Театр"
+            color="#7c3aed"
+            icon="🎬"
+            job={syncJobs.kino}
+            onSync={() => handleSync('kino', syncKino)}
+          />
+          <SyncCard
+            name="egolist"
+            label="Egolist (виконавці)"
+            color="#0ea5e9"
+            icon="🎤"
+            job={syncJobs.egolist}
+            onSync={() => handleSync('egolist', syncEgolist)}
+          />
+        </div>
+
         {/* Action bar */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, flexWrap: 'wrap', gap: 10 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <button className="btn-primary" onClick={handleSync} disabled={syncing} style={{ background: 'linear-gradient(135deg,#10b981,#059669)' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 2v6h-6M3 12a9 9 0 0115-6.7L21 8M3 22v-6h6M21 12a9 9 0 01-15 6.7L3 16" />
-              </svg>
-              {syncing ? 'Синхронізація...' : 'Оновити афіші Karabas'}
-            </button>
-            {syncMsg && <span style={{ fontSize: 13, color: syncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{syncMsg}</span>}
-            <button className="btn-primary" onClick={handleKinoSync} disabled={kinoSyncing} style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/><line x1="2" y1="17" x2="7" y2="17"/>
-              </svg>
-              {kinoSyncing ? 'Синхронізація...' : 'Оновити кіно'}
-            </button>
-            {kinoSyncMsg && <span style={{ fontSize: 13, color: kinoSyncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{kinoSyncMsg}</span>}
-            <button className="btn-primary" onClick={handleEgolistSync} disabled={egolistSyncing} style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
-              </svg>
-              {egolistSyncing ? 'Синхронізація...' : 'Оновити виконавців'}
-            </button>
-            {egolistSyncMsg && <span style={{ fontSize: 13, color: egolistSyncMsg.startsWith('✅') ? '#10b981' : '#dc2626' }}>{egolistSyncMsg}</span>}
-          </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>
           <button className="btn-primary" onClick={load} disabled={loading}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
@@ -257,6 +355,92 @@ export default function Analytics() {
           letter-spacing: 0.08em; color: var(--text-muted);
           margin-bottom: 10px;
         }
+        /* Sync cards */
+        .sync-cards-row {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 14px;
+        }
+        .sync-card {
+          padding: 16px 18px;
+          border-radius: var(--radius);
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .sync-card-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .sync-card-title {
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          font-size: 13.5px;
+          font-weight: 700;
+          color: var(--text-primary);
+        }
+        .sync-card-icon { font-size: 16px; }
+        .btn-sm { padding: 5px 12px !important; font-size: 12px !important; }
+        .spinner-xs {
+          display: inline-block;
+          width: 10px; height: 10px;
+          border: 2px solid rgba(255,255,255,0.4);
+          border-top-color: #fff;
+          border-radius: 50%;
+          animation: spin 0.7s linear infinite;
+          margin-right: 5px;
+          vertical-align: middle;
+        }
+        .sync-progress-track {
+          height: 6px;
+          background: var(--border-light);
+          border-radius: 3px;
+          overflow: hidden;
+        }
+        .sync-progress-fill {
+          height: 100%;
+          border-radius: 3px;
+          min-width: 0;
+        }
+        .sync-card-footer { display: flex; flex-direction: column; gap: 4px; }
+        .sync-status-row { display: flex; align-items: center; gap: 6px; }
+        .sync-dot {
+          width: 7px; height: 7px;
+          border-radius: 50%;
+          flex-shrink: 0;
+        }
+        .sync-status-text { font-size: 12px; font-weight: 600; }
+        .sync-pct {
+          font-size: 12px; font-weight: 700;
+          color: var(--text-primary);
+          margin-left: auto;
+        }
+        .sync-eta {
+          font-size: 11px;
+          color: var(--text-muted);
+          margin-left: 4px;
+        }
+        .sync-message {
+          font-size: 11.5px;
+          color: var(--text-muted);
+          margin-top: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .sync-message-error { color: #dc2626; }
+        .sync-stats {
+          display: flex;
+          gap: 10px;
+          font-size: 11.5px;
+          color: var(--text-muted);
+          margin-top: 2px;
+        }
+        .sync-stats span { font-weight: 600; }
+        /* Stats grid */
         .analytics-stats-grid {
           display: grid;
           grid-template-columns: repeat(4, 1fr);
@@ -278,10 +462,13 @@ export default function Analytics() {
         .progress-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
         .progress-value { width: 36px; text-align: right; font-size: 13px; font-weight: 700; color: var(--text-primary); }
         .error-msg { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-sm); color: #dc2626; font-size: 13.5px; }
-        @media (max-width: 1200px) {
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @media (max-width: 1100px) {
+          .sync-cards-row { grid-template-columns: 1fr 1fr; }
           .analytics-stats-grid { grid-template-columns: repeat(3, 1fr); }
         }
         @media (max-width: 900px) {
+          .sync-cards-row { grid-template-columns: 1fr; }
           .analytics-stats-grid { grid-template-columns: repeat(2, 1fr); }
           .charts-row { grid-template-columns: 1fr; }
         }

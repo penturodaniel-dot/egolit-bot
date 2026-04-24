@@ -588,53 +588,103 @@ async def buttons_delete(request: Request, btn_id: int):
     return RedirectResponse("/buttons?msg=Кнопку+видалено&msg_type=success", status_code=303)
 
 
+# ── Sync state (shared across all background sync jobs) ───────────────────
+
+import time as _time
+
+_sync_state: dict = {
+    "karabas": {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
+    "kino":    {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
+    "egolist": {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
+}
+
+
+def _make_progress_cb(name: str):
+    """Returns an async callback that updates _sync_state[name] with progress info."""
+    async def _cb(done: int, total: int, message: str = ""):
+        pct = int(done / total * 100) if total else 0
+        started = _sync_state[name]["started_at"] or _time.time()
+        elapsed = _time.time() - started
+        eta: int | None = None
+        if done > 0 and done < total:
+            eta = int(elapsed / done * (total - done))
+        _sync_state[name].update({"progress": pct, "message": message, "eta": eta})
+    return _cb
+
+
 # ── Karabas sync ──────────────────────────────────────────────────────────
 
 async def _run_karabas_bg():
+    _sync_state["karabas"].update({"status": "running", "progress": 0,
+                                   "message": "Починаємо…", "started_at": _time.time(),
+                                   "eta": None, "stats": None})
     try:
-        stats = await karabas_scrape_all()
+        stats = await karabas_scrape_all(progress_cb=_make_progress_cb("karabas"))
+        _sync_state["karabas"].update({"status": "done", "progress": 100, "eta": None,
+                                       "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} активних",
+                                       "stats": stats})
         _sched_logger.info("Manual Karabas sync done: %s", stats)
-    except Exception:
+    except Exception as e:
+        _sync_state["karabas"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
         _sched_logger.exception("Manual Karabas sync failed")
 
 
 async def _run_kino_bg():
+    _sync_state["kino"].update({"status": "running", "progress": 0,
+                                "message": "Отримуємо список фільмів…", "started_at": _time.time(),
+                                "eta": None, "stats": None})
     try:
-        stats = await kino_scrape_all()
+        stats = await kino_scrape_all(progress_cb=_make_progress_cb("kino"))
+        _sync_state["kino"].update({"status": "done", "progress": 100, "eta": None,
+                                    "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} активних",
+                                    "stats": stats})
         _kino_logger.info("Manual kino-teatr sync done: %s", stats)
-    except Exception:
+    except Exception as e:
+        _sync_state["kino"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
         _kino_logger.exception("Manual kino-teatr sync failed")
+
+
+async def _run_egolist_bg():
+    _sync_state["egolist"].update({"status": "running", "progress": 0,
+                                   "message": "Починаємо обхід категорій…", "started_at": _time.time(),
+                                   "eta": None, "stats": None})
+    try:
+        stats = await egolist_scrape_all(progress_cb=_make_progress_cb("egolist"))
+        _sync_state["egolist"].update({"status": "done", "progress": 100, "eta": None,
+                                       "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} в БД",
+                                       "stats": stats})
+        _egolist_logger.info("Manual Egolist sync done: %s", stats)
+    except Exception as e:
+        _sync_state["egolist"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
+        _egolist_logger.exception("Manual Egolist sync failed")
+
+
+@app.get("/api/sync-status")
+async def api_sync_status(request: Request):
+    """Returns current status of all background sync jobs."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse(_sync_state)
 
 
 @app.post("/api/sync-karabas")
 async def api_sync_karabas(request: Request, background_tasks: BackgroundTasks):
-    """Start Karabas scrape in background (returns immediately to avoid 502 timeout)."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_karabas_bg)
-    return JSONResponse({"ok": True, "status": "started", "new": 0, "updated": 0, "total_active": 0})
+    return JSONResponse({"ok": True, "status": "started"})
 
 
 @app.post("/api/sync-kino")
 async def api_sync_kino(request: Request, background_tasks: BackgroundTasks):
-    """Start kino-teatr.ua scrape in background (returns immediately to avoid 502 timeout)."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_kino_bg)
-    return JSONResponse({"ok": True, "status": "started", "new": 0, "updated": 0, "total_active": 0})
-
-
-async def _run_egolist_bg():
-    try:
-        stats = await egolist_scrape_all()
-        _egolist_logger.info("Manual Egolist sync done: %s", stats)
-    except Exception:
-        _egolist_logger.exception("Manual Egolist sync failed")
+    return JSONResponse({"ok": True, "status": "started"})
 
 
 @app.post("/api/sync-egolist")
 async def api_sync_egolist(request: Request, background_tasks: BackgroundTasks):
-    """Start Egolist performers/venues scrape in background."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_egolist_bg)

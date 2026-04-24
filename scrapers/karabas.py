@@ -63,16 +63,17 @@ async def init_karabas_events() -> None:
 
 # ── Main entry point ──────────────────────────────────────────────────────
 
-async def scrape_all() -> dict:
+async def scrape_all(progress_cb=None) -> dict:
     await init_karabas_events()
 
     totals = {"new": 0, "updated": 0, "errors": 0}
     seen_urls: set[str] = set()
+    total_cats = len(CATEGORIES)
 
     async with httpx.AsyncClient(
         headers=HEADERS, timeout=30, follow_redirects=True
     ) as client:
-        for slug, category_ua in CATEGORIES:
+        for i, (slug, category_ua) in enumerate(CATEGORIES, 1):
             try:
                 stats, urls = await _scrape_category(client, slug, category_ua)
                 totals["new"]     += stats["new"]
@@ -81,6 +82,8 @@ async def scrape_all() -> dict:
             except Exception as e:
                 logger.error(f"Karabas [{slug}] error: {e}")
                 totals["errors"] += 1
+            if progress_cb:
+                await progress_cb(i, total_cats, f"{category_ua} ({i}/{total_cats})")
 
     # Deactivate events no longer on site
     pool = await get_pool()
