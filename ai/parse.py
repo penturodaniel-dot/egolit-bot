@@ -4,12 +4,10 @@ AI знає реальні категорії Egolist і повертає catego
 """
 import json
 from typing import Optional
-from openai import AsyncOpenAI
 from pydantic import BaseModel
 from config import settings
 from db.egolist_api import get_categories_prompt
-
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+from ai.client import client, build_completion_params
 
 # Russian → Ukrainian character normalization (fallback if AI doesn't transliterate)
 _RU_TO_UK = str.maketrans({
@@ -158,11 +156,8 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     messages.append({"role": "user", "content": user_text})
 
     response = await client.chat.completions.create(
-        model="gpt-5-mini",
         messages=messages,
-        response_format={"type": "json_object"},
-        max_completion_tokens=600,
-        reasoning_effort="minimal",
+        **build_completion_params(max_tokens=600, temperature=0.1, json_mode=True),
     )
 
     raw = response.choices[0].message.content

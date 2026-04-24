@@ -2,11 +2,8 @@
 AI-відповіді: вступний текст + пояснення чому кожен варіант підходить.
 """
 import json
-from openai import AsyncOpenAI
 from db.queries import ProductResult, EventResult
-from config import settings
-
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+from ai.client import client, build_completion_params
 
 INTRO_PROMPT = """Ти — помічник Egolist. Відповідай по-українськи, дружньо, коротко.
 
@@ -44,13 +41,11 @@ async def format_intro(
         task = f'Запит: "{user_query}". Нічого не знайдено. Напиши одне речення про це.'
 
     response = await client.chat.completions.create(
-        model="gpt-5-mini",
         messages=[
             {"role": "system", "content": INTRO_PROMPT},
             {"role": "user", "content": task},
         ],
-        max_completion_tokens=200,
-        reasoning_effort="minimal",
+        **build_completion_params(max_tokens=200, temperature=0.4),
     )
     text = (response.choices[0].message.content or "").strip()
     if not text:
@@ -97,13 +92,11 @@ async def generate_match_reasons(
 
     try:
         response = await client.chat.completions.create(
-            model="gpt-5-mini",
             messages=[
                 {"role": "system", "content": REASONS_PROMPT},
                 {"role": "user", "content": task},
             ],
-            max_completion_tokens=800,
-            reasoning_effort="minimal",
+            **build_completion_params(max_tokens=800, temperature=0.5),
         )
         raw = response.choices[0].message.content.strip()
         reasons = json.loads(raw)

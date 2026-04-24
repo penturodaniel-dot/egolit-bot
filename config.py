@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: str = ""
     CLOUDINARY_API_SECRET: str = ""
 
+    # AI provider switching: "openai" | "groq" | "openrouter"
+    AI_PROVIDER: str = "openai"
+    AI_MODEL: str = "gpt-5-mini"
+    GROQ_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
+
     class Config:
         env_file = ".env"
 
