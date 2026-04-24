@@ -38,9 +38,8 @@ from db.chat import (
     delete_quick_reply,
     update_quick_reply,
 )
-from scrapers.karabas import scrape_all as karabas_scrape_all
-from scrapers.kino_teatr import scrape_all as kino_scrape_all, init_kino_events
 from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
+from scrapers.egolist_events import scrape_all as events_scrape_all, init_egolist_events
 from db.menu_buttons import (
     load_all_buttons, get_button,
     create_button, update_button, toggle_button, delete_button,
@@ -371,57 +370,32 @@ async def settings_save(
 
 # ── Menu Buttons ──────────────────────────────────────────────────────────
 
-_sched_logger = logging.getLogger("karabas.scheduler")
+_sched_logger = logging.getLogger("scheduler")
 
 
-async def _nightly_karabas_loop():
-    """Run Karabas scrape every night at 00:00 local time."""
-    while True:
-        try:
-            now = datetime.now()
-            tomorrow_midnight = (now + timedelta(days=1)).replace(
-                hour=0, minute=0, second=10, microsecond=0
-            )
-            sleep_secs = (tomorrow_midnight - now).total_seconds()
-            _sched_logger.info("Next Karabas scrape in %.1fh", sleep_secs / 3600)
-            await asyncio.sleep(sleep_secs)
-            _sched_logger.info("Starting nightly Karabas scrape…")
-            stats = await karabas_scrape_all()
-            _sched_logger.info("Nightly scrape done: %s", stats)
-        except asyncio.CancelledError:
-            break
-        except Exception:
-            _sched_logger.exception("Nightly Karabas scrape failed")
-            await asyncio.sleep(3600)  # retry in 1h on error
-
-
-_kino_logger = logging.getLogger("kino.scheduler")
-_egolist_logger = logging.getLogger("egolist.scheduler")
-
-
-async def _nightly_kino_loop():
-    """Run kino-teatr.ua scrape every night at 00:10 local time."""
+async def _nightly_events_loop():
+    """Run Egolist events scrape every night at 00:00."""
     while True:
         try:
             now = datetime.now()
             tomorrow = (now + timedelta(days=1)).replace(
-                hour=0, minute=10, second=0, microsecond=0
+                hour=0, minute=0, second=10, microsecond=0
             )
             sleep_secs = (tomorrow - now).total_seconds()
-            _kino_logger.info("Next kino-teatr scrape in %.1fh", sleep_secs / 3600)
+            _sched_logger.info("Next events scrape in %.1fh", sleep_secs / 3600)
             await asyncio.sleep(sleep_secs)
-            _kino_logger.info("Starting nightly kino-teatr scrape…")
-            stats = await kino_scrape_all()
-            _kino_logger.info("Nightly kino-teatr scrape done: %s", stats)
+            _sched_logger.info("Starting nightly events scrape…")
+            stats = await events_scrape_all()
+            _sched_logger.info("Nightly events scrape done: %s", stats)
         except asyncio.CancelledError:
             break
         except Exception:
-            _kino_logger.exception("Nightly kino-teatr scrape failed")
+            _sched_logger.exception("Nightly events scrape failed")
             await asyncio.sleep(3600)
 
 
 async def _nightly_egolist_loop():
-    """Run Egolist performers/venues scrape every night at 01:00 local time."""
+    """Run Egolist performers/venues scrape every night at 01:00."""
     while True:
         try:
             now = datetime.now()
@@ -429,15 +403,15 @@ async def _nightly_egolist_loop():
                 hour=1, minute=0, second=0, microsecond=0
             )
             sleep_secs = (tomorrow - now).total_seconds()
-            _egolist_logger.info("Next Egolist scrape in %.1fh", sleep_secs / 3600)
+            _sched_logger.info("Next egolist products scrape in %.1fh", sleep_secs / 3600)
             await asyncio.sleep(sleep_secs)
-            _egolist_logger.info("Starting nightly Egolist scrape…")
+            _sched_logger.info("Starting nightly egolist products scrape…")
             stats = await egolist_scrape_all()
-            _egolist_logger.info("Nightly Egolist scrape done: %s", stats)
+            _sched_logger.info("Nightly egolist products scrape done: %s", stats)
         except asyncio.CancelledError:
             break
         except Exception:
-            _egolist_logger.exception("Nightly Egolist scrape failed")
+            _sched_logger.exception("Nightly egolist products scrape failed")
             await asyncio.sleep(3600)
 
 
@@ -447,10 +421,9 @@ async def on_startup():
     await init_menu_buttons()
     await init_chat_tables()
     await init_content_tables()
-    await init_kino_events()
+    await init_egolist_events()
     await init_egolist_products()
-    asyncio.create_task(_nightly_karabas_loop())
-    asyncio.create_task(_nightly_kino_loop())
+    asyncio.create_task(_nightly_events_loop())
     asyncio.create_task(_nightly_egolist_loop())
     # Ensure new lead columns exist (safe migration)
     try:
@@ -593,8 +566,7 @@ async def buttons_delete(request: Request, btn_id: int):
 import time as _time
 
 _sync_state: dict = {
-    "karabas": {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
-    "kino":    {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
+    "events":  {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
     "egolist": {"status": "idle", "progress": 0, "message": "", "started_at": None, "eta": None, "stats": None},
 }
 
@@ -612,36 +584,21 @@ def _make_progress_cb(name: str):
     return _cb
 
 
-# ── Karabas sync ──────────────────────────────────────────────────────────
+# ── Events sync ───────────────────────────────────────────────────────────
 
-async def _run_karabas_bg():
-    _sync_state["karabas"].update({"status": "running", "progress": 0,
-                                   "message": "Починаємо…", "started_at": _time.time(),
-                                   "eta": None, "stats": None})
+async def _run_events_bg():
+    _sync_state["events"].update({"status": "running", "progress": 0,
+                                  "message": "Завантажуємо афішу…", "started_at": _time.time(),
+                                  "eta": None, "stats": None})
     try:
-        stats = await karabas_scrape_all(progress_cb=_make_progress_cb("karabas"))
-        _sync_state["karabas"].update({"status": "done", "progress": 100, "eta": None,
-                                       "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} активних",
-                                       "stats": stats})
-        _sched_logger.info("Manual Karabas sync done: %s", stats)
+        stats = await events_scrape_all(progress_cb=_make_progress_cb("events"))
+        _sync_state["events"].update({"status": "done", "progress": 100, "eta": None,
+                                      "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} активних",
+                                      "stats": stats})
+        _sched_logger.info("Manual events sync done: %s", stats)
     except Exception as e:
-        _sync_state["karabas"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
-        _sched_logger.exception("Manual Karabas sync failed")
-
-
-async def _run_kino_bg():
-    _sync_state["kino"].update({"status": "running", "progress": 0,
-                                "message": "Отримуємо список фільмів…", "started_at": _time.time(),
-                                "eta": None, "stats": None})
-    try:
-        stats = await kino_scrape_all(progress_cb=_make_progress_cb("kino"))
-        _sync_state["kino"].update({"status": "done", "progress": 100, "eta": None,
-                                    "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} активних",
-                                    "stats": stats})
-        _kino_logger.info("Manual kino-teatr sync done: %s", stats)
-    except Exception as e:
-        _sync_state["kino"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
-        _kino_logger.exception("Manual kino-teatr sync failed")
+        _sync_state["events"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
+        _sched_logger.exception("Manual events sync failed")
 
 
 async def _run_egolist_bg():
@@ -667,19 +624,11 @@ async def api_sync_status(request: Request):
     return JSONResponse(_sync_state)
 
 
-@app.post("/api/sync-karabas")
-async def api_sync_karabas(request: Request, background_tasks: BackgroundTasks):
+@app.post("/api/sync-events")
+async def api_sync_events(request: Request, background_tasks: BackgroundTasks):
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    background_tasks.add_task(_run_karabas_bg)
-    return JSONResponse({"ok": True, "status": "started"})
-
-
-@app.post("/api/sync-kino")
-async def api_sync_kino(request: Request, background_tasks: BackgroundTasks):
-    if not request.session.get("authenticated"):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
-    background_tasks.add_task(_run_kino_bg)
+    background_tasks.add_task(_run_events_bg)
     return JSONResponse({"ok": True, "status": "started"})
 
 
@@ -1107,21 +1056,14 @@ async def api_analytics(request: Request):
     except Exception:
         pass
 
-    # Karabas events count
+    # Egolist events count (afisha)
     events_count = 0
     try:
-        events_count = await db.fetchval("SELECT COUNT(*) FROM karabas_events WHERE is_active=TRUE") or 0
+        events_count = await db.fetchval("SELECT COUNT(*) FROM egolist_events WHERE is_active=TRUE") or 0
     except Exception:
         pass
 
-    # Kino events count
-    kino_count = 0
-    try:
-        kino_count = await db.fetchval("SELECT COUNT(*) FROM kino_events WHERE is_active=TRUE") or 0
-    except Exception:
-        pass
-
-    # Egolist products count
+    # Egolist products count (performers/venues)
     egolist_count = 0
     try:
         egolist_count = await db.fetchval("SELECT COUNT(*) FROM egolist_products WHERE is_active=TRUE") or 0
@@ -1172,7 +1114,6 @@ async def api_analytics(request: Request):
         },
         "handoffs": int(handoffs),
         "events_active": int(events_count),
-        "kino_active": int(kino_count),
         "egolist_active": int(egolist_count),
         "conversion": conversion,
         "leads_by_category": leads_by_cat,

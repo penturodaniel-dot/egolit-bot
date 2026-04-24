@@ -1,8 +1,11 @@
+import logging
 from dataclasses import dataclass
 from typing import Optional
 from db.connection import get_pool
 from config import settings
 from db.content import search_bot_places, search_bot_events_active
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -195,65 +198,80 @@ async def search_products(
     return results[:limit]
 
 
-# ── Karabas events ────────────────────────────────────────────────────────────
+# ── Egolist events (replaces karabas_events + kino_events) ───────────────────
 
-async def search_karabas_events(
-    category: str | None = None,
+# Maps old event_category values (from AI) → egolist event_slug
+_CATEGORY_TO_SLUG: dict[str, str | None] = {
+    "концерти":            "koncerti",
+    "театр":               None,
+    "діти":                "dlia-ditei",
+    "для дітей":           "dlia-ditei",
+    "стендап":             None,
+    "фестивалі":           "koncerti",
+    "клуби":               "aktivnii-vidpocinok",
+    "виставки":            "vistavi",
+    "спорт":               "aktivnii-vidpocinok",
+    "цирк":                None,
+    "активний відпочинок": "aktivnii-vidpocinok",
+    "майстер-класи":       "maister-klasi",
+    "кіно":                "kino",
+}
+
+
+async def _search_egolist_events(
+    event_slug: str | None = None,
     limit: int = 5,
     offset: int = 0,
     date_filter: str | None = None,
     search_text: str | None = None,
+    fallback_search: str | None = None,   # extra text search when slug=None
 ) -> list[EventResult]:
-    """Search events scraped from Karabas.com. Falls back to empty list if table missing.
-
-    date_filter: "today" | "weekend" | "week" | "month" | None (all future)
-    """
+    """Core query against egolist_events table."""
     pool = await get_pool()
 
-    # Check table exists
     exists = await pool.fetchval(
-        "SELECT 1 FROM information_schema.tables WHERE table_name='karabas_events'"
+        "SELECT 1 FROM information_schema.tables WHERE table_name='egolist_events'"
     )
     if not exists:
         return []
 
     params: list = []
-    where = ["is_active = TRUE"]
+    where = ["is_active = TRUE", "date >= CURRENT_DATE"]
 
     if date_filter == "today":
-        where.append("date = CURRENT_DATE")
+        where[-1] = "date = CURRENT_DATE"
     elif date_filter == "weekend":
-        where.append(
+        where[-1] = (
             "date >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' "
             "AND date <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'"
         )
     elif date_filter == "week":
-        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '7 days'")
+        where[-1] = "date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '7 days'"
     elif date_filter == "month":
-        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '30 days'")
-    else:
-        where.append("date >= CURRENT_DATE")
+        where[-1] = "date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '30 days'"
 
-    if category:
-        where.append(f"category = ${len(params)+1}")
-        params.append(category)
+    if event_slug:
+        params.append(event_slug)
+        where.append(f"event_slug = ${len(params)}")
 
-    trgm_idx: int | None = None
     order_by = "date ASC NULLS LAST"
 
-    if search_text:
+    # Combine search_text + fallback_search
+    combined_text = search_text or fallback_search
+    if combined_text:
         trgm = await _ensure_trgm()
-        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
+        words = [w for w in combined_text.split() if len(w) >= 3] or [combined_text]
         base = len(params)
         word_conds = " OR ".join(
-            f"title ILIKE ${base+i+1}" for i in range(len(words))
+            f"(title ILIKE ${base+i+1} OR COALESCE(description,'') ILIKE ${base+i+1})"
+            for i in range(len(words))
         )
         params.extend(f"%{w}%" for w in words)
 
         if trgm:
             trgm_idx = len(params) + 1
             where.append(f"({word_conds} OR similarity(title, ${trgm_idx}) > 0.25)")
-            params.append(search_text)
+            params.append(combined_text)
             order_by = f"similarity(title, ${trgm_idx}) DESC, date ASC NULLS LAST"
         else:
             where.append(f"({word_conds})")
@@ -263,19 +281,24 @@ async def search_karabas_events(
     offset_idx = len(params) + 2
     params += [limit, offset]
 
-    rows = await pool.fetch(f"""
-        SELECT id, title, date::text, time::text, price, place_name, image_url, source_url
-        FROM karabas_events
-        WHERE {where_sql}
-        ORDER BY {order_by}
-        LIMIT ${limit_idx} OFFSET ${offset_idx}
-    """, *params)
+    try:
+        rows = await pool.fetch(f"""
+            SELECT id, title, description, date::text, time::text,
+                   price, place_name, image_url, source_url, event_type
+            FROM egolist_events
+            WHERE {where_sql}
+            ORDER BY {order_by}
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
+        """, *params)
+    except Exception as e:
+        logger.warning("egolist_events query error: %s", e)
+        return []
 
-    results = [
+    return [
         EventResult(
             id=r["id"],
             title=r["title"],
-            description="",
+            description=(r["description"] or "")[:300],
             date=r["date"] or "",
             time=r["time"] or None,
             price=r["price"],
@@ -287,6 +310,29 @@ async def search_karabas_events(
         )
         for r in rows
     ]
+
+
+async def search_karabas_events(
+    category: str | None = None,
+    limit: int = 5,
+    offset: int = 0,
+    date_filter: str | None = None,
+    search_text: str | None = None,
+) -> list[EventResult]:
+    """Search events from egolist_events (replaces Karabas scraper).
+    category maps to event_slug; None = all non-kino events.
+    """
+    event_slug = _CATEGORY_TO_SLUG.get(category or "", None) if category else None
+    fallback = category if (category and not event_slug) else None
+
+    results = await _search_egolist_events(
+        event_slug=event_slug,
+        limit=limit,
+        offset=offset,
+        date_filter=date_filter,
+        search_text=search_text,
+        fallback_search=fallback,
+    )
 
     # Prepend bot-managed featured events
     try:
@@ -323,108 +369,20 @@ async def search_karabas_events(
     return results[:limit]
 
 
-# ── Cinema (kino-teatr.ua) events ────────────────────────────────────────────
-
 async def search_kino_events(
     limit: int = 5,
     offset: int = 0,
     date_filter: str | None = None,
     search_text: str | None = None,
 ) -> list[EventResult]:
-    """Search cinema films scraped from kino-teatr.ua. Returns [] if table missing."""
-    pool = await get_pool()
-
-    exists = await pool.fetchval(
-        "SELECT 1 FROM information_schema.tables WHERE table_name='kino_events'"
+    """Search cinema events from egolist_events (replaces kino-teatr.ua scraper)."""
+    return await _search_egolist_events(
+        event_slug="kino",
+        limit=limit,
+        offset=offset,
+        date_filter=date_filter,
+        search_text=search_text,
     )
-    if not exists:
-        return []
-
-    params: list = []
-    where = ["is_active = TRUE"]
-    today_clause = "CURRENT_DATE"
-
-    if date_filter == "today":
-        where.append(f"date_from <= {today_clause} AND (date_to >= {today_clause} OR date_to IS NULL)")
-    elif date_filter == "weekend":
-        where.append(
-            f"date_from <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days' "
-            f"AND (date_to >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' OR date_to IS NULL)"
-        )
-    elif date_filter == "week":
-        where.append(f"date_from <= CURRENT_DATE + INTERVAL '7 days' AND (date_to >= CURRENT_DATE OR date_to IS NULL)")
-    elif date_filter == "month":
-        where.append(f"date_from <= CURRENT_DATE + INTERVAL '30 days' AND (date_to >= CURRENT_DATE OR date_to IS NULL)")
-    else:
-        where.append(f"(date_to >= CURRENT_DATE OR date_to IS NULL OR date_from >= CURRENT_DATE)")
-
-    trgm_idx: int | None = None
-    order_by = "date_from ASC NULLS LAST"
-
-    if search_text:
-        trgm = await _ensure_trgm()
-        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
-        base = len(params)
-        word_conds = " OR ".join(
-            f"(title ILIKE ${base+i+1} OR COALESCE(genre,'') ILIKE ${base+i+1})"
-            for i in range(len(words))
-        )
-        params.extend(f"%{w}%" for w in words)
-
-        if trgm:
-            trgm_idx = len(params) + 1
-            where.append(f"({word_conds} OR similarity(title, ${trgm_idx}) > 0.25)")
-            params.append(search_text)
-            order_by = f"similarity(title, ${trgm_idx}) DESC, date_from ASC NULLS LAST"
-        else:
-            where.append(f"({word_conds})")
-
-    where_sql = " AND ".join(where)
-    limit_idx = len(params) + 1
-    offset_idx = len(params) + 2
-    params += [limit, offset]
-
-    rows = await pool.fetch(f"""
-        SELECT id, title, description, genre,
-               date_from::text, date_to::text,
-               price, cinema_name, image_url, source_url
-        FROM kino_events
-        WHERE {where_sql}
-        ORDER BY {order_by}
-        LIMIT ${limit_idx} OFFSET ${offset_idx}
-    """, *params)
-
-    results = []
-    for r in rows:
-        # Format date range as readable string
-        d_from = r["date_from"] or ""
-        d_to = r["date_to"] or ""
-        if d_from and d_to and d_from != d_to:
-            date_str = f"{d_from} — {d_to}"
-        else:
-            date_str = d_from or d_to
-
-        # Description: prepend genre if present
-        desc = ""
-        if r["genre"]:
-            desc = f"🎬 {r['genre']}"
-        if r["description"]:
-            desc = (desc + "\n" + r["description"][:200]).strip() if desc else r["description"][:200]
-
-        results.append(EventResult(
-            id=r["id"],
-            title=r["title"],
-            description=desc,
-            date=date_str,
-            time=None,
-            price=r["price"],
-            place_name=r["cinema_name"],
-            place_address="Дніпро",
-            city="Дніпро",
-            photo_url=r["image_url"],
-            source_url=r["source_url"],
-        ))
-    return results
 
 
 # ── Fallback events ───────────────────────────────────────────────────────────

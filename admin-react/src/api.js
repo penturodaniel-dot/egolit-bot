@@ -147,13 +147,9 @@ export const saveSettings = (data) =>
 export const testNotification = () =>
   request('POST', '/settings/test-notification');
 
-// Karabas sync
-export const syncKarabas = () =>
-  request('POST', '/sync-karabas');
-
-// Kino-teatr sync
-export const syncKino = () =>
-  request('POST', '/sync-kino');
+// Egolist events (afisha) sync
+export const syncEvents = () =>
+  request('POST', '/sync-events');
 
 // Egolist performers/venues sync
 export const syncEgolist = () =>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAnalytics, syncKarabas, syncKino, syncEgolist, getSyncStatus } from '../api.js';
+import { getAnalytics, syncEvents, syncEgolist, getSyncStatus } from '../api.js';
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -162,8 +162,7 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [syncJobs, setSyncJobs] = useState({
-    karabas: { status: 'idle', progress: 0, message: '', eta: null, stats: null },
-    kino:    { status: 'idle', progress: 0, message: '', eta: null, stats: null },
+    events:  { status: 'idle', progress: 0, message: '', eta: null, stats: null },
     egolist: { status: 'idle', progress: 0, message: '', eta: null, stats: null },
   });
   const pollRef = useRef(null);
@@ -187,7 +186,7 @@ export default function Analytics() {
           const status = await getSyncStatus();
           setSyncJobs(prev => {
             const next = { ...prev };
-            for (const key of ['karabas', 'kino', 'egolist']) {
+            for (const key of ['events', 'egolist']) {
               if (status[key]) next[key] = status[key];
             }
             return next;
@@ -228,7 +227,6 @@ export default function Analytics() {
   const handoffs = data?.handoffs ?? 0;
   const conversion = data?.conversion ?? 0;
   const eventsActive = data?.events_active ?? 0;
-  const kinoActive = data?.kino_active ?? 0;
   const egolistActive = data?.egolist_active ?? 0;
   const leadsByCat = data?.leads_by_category || [];
   const maxLeadCat = leadsByCat.length ? Math.max(...leadsByCat.map(c => c.count), 1) : 1;
@@ -242,24 +240,16 @@ export default function Analytics() {
         <div className="section-label">Синхронізація даних</div>
         <div className="sync-cards-row" style={{ marginBottom: 28 }}>
           <SyncCard
-            name="karabas"
-            label="Karabas.com"
+            name="events"
+            label="Афіша Egolist"
             color="#10b981"
             icon="🎭"
-            job={syncJobs.karabas}
-            onSync={() => handleSync('karabas', syncKarabas)}
-          />
-          <SyncCard
-            name="kino"
-            label="Кіно-Театр"
-            color="#7c3aed"
-            icon="🎬"
-            job={syncJobs.kino}
-            onSync={() => handleSync('kino', syncKino)}
+            job={syncJobs.events}
+            onSync={() => handleSync('events', syncEvents)}
           />
           <SyncCard
             name="egolist"
-            label="Egolist (виконавці)"
+            label="Виконавці Egolist"
             color="#0ea5e9"
             icon="🎤"
             job={syncJobs.egolist}
@@ -313,8 +303,7 @@ export default function Analytics() {
               <StatCard label="Виконано"        value={leads.done}    />
               <StatCard label="Заявок сьогодні" value={leads.today}   sub="за сьогодні" />
               <StatCard label="Конверсія"       value={`${conversion}%`} sub="заявок від діалогів" accent color="var(--accent2)" />
-              <StatCard label="Активних афіш"   value={eventsActive}  sub="Karabas" />
-              <StatCard label="Фільмів у кіно"  value={kinoActive}    sub="kino-teatr.ua" accent color="#7c3aed" />
+              <StatCard label="Подій в афіші"    value={eventsActive}  sub="Egolist афіша" accent color="#10b981" />
               <StatCard label="Виконавців в БД" value={egolistActive} sub="Egolist (Дніпро)" accent color="#0ea5e9" />
             </div>
 
@@ -358,7 +347,7 @@ export default function Analytics() {
         /* Sync cards */
         .sync-cards-row {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(2, 1fr);
           gap: 14px;
         }
         .sync-card {
@@ -464,7 +453,6 @@ export default function Analytics() {
         .error-msg { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-sm); color: #dc2626; font-size: 13.5px; }
         @keyframes spin { to { transform: rotate(360deg); } }
         @media (max-width: 1100px) {
-          .sync-cards-row { grid-template-columns: 1fr 1fr; }
           .analytics-stats-grid { grid-template-columns: repeat(3, 1fr); }
         }
         @media (max-width: 900px) {
