@@ -1,13 +1,13 @@
 """
 Перший LLM-виклик: витягуємо намір і параметри з вільного тексту.
-AI знає реальні категорії з БД і повертає точні category_ids.
+AI знає реальні категорії Egolist і повертає category_names (рядки).
 """
 import json
 from typing import Optional
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from config import settings
-from db.categories_cache import get_categories_prompt, expand_category_ids
+from db.egolist_api import get_categories_prompt
 
 client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
 
@@ -29,10 +29,10 @@ def _normalize_search(text: str | None) -> str | None:
 
 class ParsedIntent(BaseModel):
     intent: str                            # "service" | "event" | "lead" | "other"
-    category_ids: list[int]               # [100, 155] — точні ID з БД
+    category_names: list[str]             # ["ведучі", "музиканти"] — назви з нашого списку
     event_category: Optional[str]         # "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк"|"кіно"|null
-    date_filter: Optional[str]            # "today" | "weekend" | "week" | "month" | null (all future)
-    search_text: Optional[str]            # artist/performer name or keyword, e.g. "Ольга Тополя"
+    date_filter: Optional[str]            # "today" | "weekend" | "week" | "month" | null
+    search_text: Optional[str]            # конкретне ім'я або ключове слово (нормалізоване до укр)
     max_price: Optional[int]              # 1500
     needs_clarification: bool
     clarification_question: Optional[str]
@@ -46,41 +46,39 @@ BASE_PROMPT_TEXT = """\
 НІКОЛИ не питай уточнень якщо є хоч якийсь натяк на категорію послуги чи події — відразу шукай.
 needs_clarification = true ЛИШЕ якщо запит абсолютно беззмістовний (наприклад, "привіт", "тест", "?").
 
-ДОСТУПНІ КАТЕГОРІЇ:
+ДОСТУПНІ КАТЕГОРІЇ ПОСЛУГ:
 {categories}
 
 ПРАВИЛА intent:
 - "service" — шукають виконавця або послугу (фотограф, ді-джей, аніматор, ведучий, тамада, живий звук, кейтеринг тощо)
-- "event"   — шукають подію або захід куди піти (концерт, вистава, фестиваль, стендап тощо)
+- "event"   — шукають подію або захід куди піти (концерт, вистава, фестиваль, стендап, фільм у кіно тощо)
 - "lead"    — хочуть залишити заявку, поговорити з менеджером, дізнатись ціну, замовити
 - "other"   — абсолютно незрозуміло (привіт, тест, 1234 тощо)
 
 ПРАВИЛА полів:
-- category_ids — список id категорій ТІЛЬКИ якщо intent=service (масив цілих чисел)
+- category_names — масив рядків з назвами категорій ТІЛЬКИ якщо intent=service.
+  Вибирай з наведеного списку. Можна кілька. Порожній масив якщо не підходить жодна.
 - event_category — якщо intent=event: "концерти"|"театр"|"діти"|"стендап"|"фестивалі"|"клуби"|"виставки"|"спорт"|"цирк"|"кіно" або null
 - date_filter — якщо intent=event: "today"|"weekend"|"week"|"month" або null (всі майбутні)
 - search_text — конкретне ім'я виконавця, артиста, назва події або ключове слово.
   ЗАВЖДИ нормалізуй до **української** мови: якщо написано по-російськи — транслітеруй.
-  Правила транслітерації рос→укр: "ы"→"и", "э"→"е", "ё"→"е", "ъ"→"", "Цыб"→"Циб".
-  Приклади: "Оля Цыбульская"→"Оля Цибульська", "Ольга Полякова"→"Ольга Полякова", "Григорий Чапкис"→"Григорій Чапкіс".
+  Правила транслітерації рос→укр: "ы"→"и", "э"→"е", "ё"→"е", "ъ"→"".
+  Приклади: "Оля Цыбульская"→"Оля Цибульська", "Григорий Чапкис"→"Григорій Чапкіс".
   Якщо запит уже українською — залишай без змін. Інакше null.
 - max_price — максимальний бюджет якщо вказано (ціле число або null)
 - needs_clarification — true ТІЛЬКИ якщо запит повністю беззмістовний
 - clarification_question — коротке питання ТІЛЬКИ якщо needs_clarification=true
 
-ПРИКЛАДИ (needs_clarification завжди false для реальних запитів):
-"фотограф" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"потрібен фотограф" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"фотограф на весілля" → {{"intent":"service","category_ids":[155],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"ді-джей до 3000 грн" → {{"intent":"service","category_ids":[101],"event_category":null,"search_text":null,"date_filter":null,"max_price":3000,"needs_clarification":false,"clarification_question":null}}
-"аніматор для дітей" → {{"intent":"service","category_ids":[102],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"концерт Ольги Тополі" → {{"intent":"event","category_ids":[],"event_category":"концерти","search_text":"Ольга Тополя","date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"куди сьогодні піти" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"події на вихідних" → {{"intent":"event","category_ids":[],"event_category":null,"search_text":null,"date_filter":"weekend","max_price":null,"needs_clarification":false,"clarification_question":null}}
-"хочу залишити заявку" → {{"intent":"lead","category_ids":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"скільки коштує" → {{"intent":"lead","category_ids":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"що йде в кіно" → {{"intent":"event","category_ids":[],"event_category":"кіно","search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
-"фільм Дюна у кіно" → {{"intent":"event","category_ids":[],"event_category":"кіно","search_text":"Дюна","date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+ПРИКЛАДИ:
+"фотограф" → {{"intent":"service","category_names":["фото та відеозйомка"],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"ді-джей до 3000 грн" → {{"intent":"service","category_names":["музиканти"],"event_category":null,"search_text":null,"date_filter":null,"max_price":3000,"needs_clarification":false,"clarification_question":null}}
+"аніматор для дітей" → {{"intent":"service","category_names":["аніматори"],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"ведучий на весілля" → {{"intent":"service","category_names":["ведучі"],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"концерт Ольги Тополі" → {{"intent":"event","category_names":[],"event_category":"концерти","search_text":"Ольга Тополя","date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"куди сьогодні піти" → {{"intent":"event","category_names":[],"event_category":null,"search_text":null,"date_filter":"today","max_price":null,"needs_clarification":false,"clarification_question":null}}
+"що йде в кіно" → {{"intent":"event","category_names":[],"event_category":"кіно","search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"хочу залишити заявку" → {{"intent":"lead","category_names":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
+"ресторан для корпоративу" → {{"intent":"service","category_names":["ресторани та банкетні зали"],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":false,"clarification_question":null}}
 
 Відповідай ТІЛЬКИ валідним JSON без пояснень."""
 
@@ -92,7 +90,6 @@ def _build_system_prompt(extra_instructions: str = "") -> str:
 
 
 async def parse_intent(user_text: str, history: list[dict] | None = None) -> ParsedIntent:
-    # Load admin custom instructions from DB (cached implicitly via asyncpg pool)
     try:
         from db.settings import get_setting
         extra = await get_setting("ai_prompt_extra", "")
@@ -117,19 +114,15 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     raw = response.choices[0].message.content
     data = json.loads(raw)
 
-    # Захист: AI може повернути рядки замість чисел
-    raw_ids = data.get("category_ids", [])
-    if isinstance(raw_ids, str):
-        raw_ids = []
-    category_ids = [int(i) for i in raw_ids if str(i).isdigit()]
-
-    # Розширюємо: якщо вибрана батьківська категорія — додаємо всі дочірні
-    if category_ids:
-        category_ids = expand_category_ids(category_ids)
+    # category_names — масив рядків
+    raw_names = data.get("category_names", [])
+    if isinstance(raw_names, str):
+        raw_names = [raw_names] if raw_names else []
+    category_names = [str(n).strip().lower() for n in raw_names if n]
 
     return ParsedIntent(
         intent=data.get("intent", "other"),
-        category_ids=category_ids,
+        category_names=category_names,
         event_category=data.get("event_category") or None,
         date_filter=data.get("date_filter") or None,
         search_text=_normalize_search(data.get("search_text") or None),

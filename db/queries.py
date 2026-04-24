@@ -3,6 +3,7 @@ from typing import Optional
 from db.connection import get_pool
 from config import settings
 from db.content import search_bot_places, search_bot_events_active
+from db.egolist_api import search_products_api
 
 
 @dataclass
@@ -65,109 +66,27 @@ async def _ensure_trgm() -> bool:
 # ── Products ──────────────────────────────────────────────────────────────────
 
 async def search_products(
-    category_ids: list[int] | None = None,
-    city_id: int | None = None,
+    category_names: list[str] | None = None,
+    category_ids: list[int] | None = None,  # deprecated, ignored
+    city_id: int | None = None,              # deprecated, ignored (always Dnipro via API)
     max_price: int | None = None,
     search_text: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[ProductResult]:
-    pool = await get_pool()
-    city_id = city_id or settings.DEFAULT_CITY_ID
-
-    where_parts = [
-        "p.state = 'PUBLISHED'",
-        "p.deleted_at IS NULL",
-        "p.city_id = $1",
-    ]
-    params: list = [city_id]
-    idx = 2
-    trgm_idx: int | None = None
-
-    if max_price:
-        where_parts.append(f"(p.price IS NULL OR p.price <= ${idx})")
-        params.append(max_price)
-        idx += 1
-
-    if category_ids:
-        where_parts.append(f"p.category_id = ANY(${idx})")
-        params.append(category_ids)
-        idx += 1
-
-    if search_text:
-        trgm = await _ensure_trgm()
-        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
-        word_conds = " OR ".join(
-            f"(p.name ILIKE ${idx + i} OR p.description ILIKE ${idx + i})"
-            for i in range(len(words))
-        )
-        params.extend(f"%{w}%" for w in words)
-        idx += len(words)
-
-        if trgm:
-            trgm_idx = idx
-            where_parts.append(
-                f"({word_conds} OR similarity(p.name, ${trgm_idx}) > 0.25)"
-            )
-            params.append(search_text)
-            idx += 1
-        else:
-            where_parts.append(f"({word_conds})")
-
-    where_sql = " AND ".join(where_parts)
-
-    if trgm_idx:
-        order_sql = f"similarity(p.name, ${trgm_idx}) DESC, p.is_top DESC, p.is_recommended DESC, p.id DESC"
-    else:
-        order_sql = "p.is_top DESC, p.is_recommended DESC, p.id DESC"
-
-    query = f"""
-        SELECT
-            p.id, p.name,
-            COALESCE(p.description, '') as description,
-            COALESCE(c.title, '') as category,
-            COALESCE(g.name_ua, '') as city,
-            p.price, p.phone, p.instagram, p.website, p.telegram,
-            p.is_top, p.is_recommended, p.slug_seo,
-            m.uuid, m.name as media_name
-        FROM products p
-        LEFT JOIN categories c ON c.id = p.category_id
-        LEFT JOIN geo_cities g ON g.id = p.city_id
-        LEFT JOIN LATERAL (
-            SELECT uuid::text, name FROM media
-            WHERE model_id = p.id AND model_type = 'product'
-            ORDER BY id LIMIT 1
-        ) m ON true
-        WHERE {where_sql}
-        ORDER BY {order_sql}
-        LIMIT ${idx} OFFSET ${idx+1}
+    """Search products via Egolist public API (api.egolist.ua).
+    category_ids and city_id are kept for backward compat but ignored.
     """
-    params.extend([limit, offset])
+    # ── Egolist public API ────────────────────────────────────────────────
+    results = await search_products_api(
+        category_names=category_names or [],
+        max_price=max_price,
+        search_text=search_text,
+        limit=limit,
+        offset=offset,
+    )
 
-    rows = await pool.fetch(query, *params)
-
-    results = []
-    for r in rows:
-        photo = _media_url(r["uuid"], r["media_name"]) if r["uuid"] else None
-        slug = r["slug_seo"]
-        product_url = f"{settings.MEDIA_BASE_URL.replace('api.', '')}/products/{slug}" if slug else None
-        results.append(ProductResult(
-            id=r["id"],
-            name=r["name"],
-            description=r["description"][:300] if r["description"] else "",
-            category=r["category"],
-            city=r["city"],
-            price=r["price"],
-            phone=r["phone"],
-            instagram=r["instagram"],
-            website=r["website"],
-            telegram_contact=r["telegram"],
-            photo_url=photo,
-            is_top=r["is_top"] or False,
-            product_url=product_url,
-        ))
-
-    # Also search bot-managed places (priority items shown first)
+    # ── Bot-managed places (featured shown first) ─────────────────────────
     try:
         bot_rows = await search_bot_places(
             search_text=search_text,
@@ -176,8 +95,8 @@ async def search_products(
             offset=offset,
         )
         for r in bot_rows:
-            results.insert(0 if r.get("is_featured") else len(results), ProductResult(
-                id=-(r["id"]),  # negative id to avoid collision
+            p = ProductResult(
+                id=-(r["id"]),
                 name=r["name"],
                 description=(r.get("description") or "")[:300],
                 category=r.get("category") or "",
@@ -190,7 +109,11 @@ async def search_products(
                 photo_url=r.get("photo_url"),
                 is_top=bool(r.get("is_featured")),
                 product_url=r.get("booking_url"),
-            ))
+            )
+            if r.get("is_featured"):
+                results.insert(0, p)
+            else:
+                results.append(p)
     except Exception:
         pass
 

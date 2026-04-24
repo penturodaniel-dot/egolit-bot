@@ -260,7 +260,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             last_query=user_text,
             last_intent=parsed.intent,
             last_event_category=parsed.event_category,
-            last_category_ids=parsed.category_ids,
+            last_category_names=parsed.category_names,
             last_max_price=parsed.max_price,
             last_search_text=parsed.search_text,
             last_offset=0,
@@ -301,7 +301,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                 events = await search_events(limit=5)
         else:
             products = await search_products(
-                category_ids=parsed.category_ids or None,
+                category_names=parsed.category_names or None,
                 max_price=parsed.max_price,
                 search_text=search_text,
                 limit=5,
@@ -375,7 +375,7 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     offset = data.get("last_offset", 0) + 5
     intent = data.get("last_intent", "service")
     event_category = data.get("last_event_category")
-    category_ids = data.get("last_category_ids", [])
+    category_names = data.get("last_category_names", [])
     max_price = data.get("last_max_price")
 
     date_filter = data.get("last_date_filter")
@@ -399,7 +399,7 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         products, events = [], results
     else:
         products = await search_products(
-            category_ids=category_ids or None,
+            category_names=category_names or None,
             max_price=max_price,
             search_text=search_text,
             limit=5,
