@@ -610,10 +610,10 @@ async def _run_egolist_bg():
         _sync_state["egolist"].update({"status": "done", "progress": 100, "eta": None,
                                        "message": f"Готово: +{stats['new']} нових, {stats['updated']} оновлено, {stats.get('total_active', 0)} в БД",
                                        "stats": stats})
-        _egolist_logger.info("Manual Egolist sync done: %s", stats)
+        _sched_logger.info("Manual Egolist sync done: %s", stats)
     except Exception as e:
         _sync_state["egolist"].update({"status": "error", "message": f"Помилка: {e}", "eta": None})
-        _egolist_logger.exception("Manual Egolist sync failed")
+        _sched_logger.exception("Manual Egolist sync failed")
 
 
 @app.get("/api/sync-status")
