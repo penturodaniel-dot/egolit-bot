@@ -170,8 +170,13 @@ async def _send_event_card(
 
     if event.photo_url:
         try:
-            img_bytes = await _fetch_image_bytes(event.photo_url)
-            photo = BufferedInputFile(img_bytes, filename="photo.jpg") if img_bytes else URLInputFile(event.photo_url)
+            # Cloudinary URLs are publicly accessible — send directly
+            # For other hosts (gorod.dp.ua) — download via httpx first
+            if "cloudinary.com" in event.photo_url:
+                photo = URLInputFile(event.photo_url)
+            else:
+                img_bytes = await _fetch_image_bytes(event.photo_url)
+                photo = BufferedInputFile(img_bytes, filename="photo.jpg") if img_bytes else URLInputFile(event.photo_url)
             caption = card_text[:CAPTION_LIMIT]
             await bot.send_photo(
                 chat_id=message.chat.id,
