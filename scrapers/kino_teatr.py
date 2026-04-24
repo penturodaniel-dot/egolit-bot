@@ -6,6 +6,7 @@ Each film is stored as ONE row in kino_events (aggregated across cinemas).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date as date_type, datetime, timedelta
 from typing import Optional
@@ -63,22 +64,29 @@ async def scrape_all() -> dict:
     seen_urls: set[str] = set()
 
     async with httpx.AsyncClient(
-        headers=HEADERS, timeout=30, follow_redirects=True
+        headers=HEADERS, timeout=15, follow_redirects=True
     ) as client:
         films = await _fetch_films(client)
         logger.info(f"kino-teatr: fetched {len(films)} films for Dnipro")
 
-        for film in films:
-            try:
-                n, u, url = await _process_film(client, film)
-                totals["new"] += n
-                totals["updated"] += u
-                if url:
-                    seen_urls.add(url)
-            except Exception as e:
-                title = film.get("title") or film.get("name") or "?"
-                logger.warning(f"kino-teatr film '{title}' error: {e}")
-                totals["errors"] += 1
+        # Process all films in parallel (max 10 concurrent)
+        sem = asyncio.Semaphore(10)
+
+        async def _safe_process(film):
+            async with sem:
+                try:
+                    return await _process_film(client, film)
+                except Exception as e:
+                    title = film.get("title") or film.get("name") or "?"
+                    logger.warning(f"kino-teatr film '{title}' error: {e}")
+                    return 0, 0, None
+
+        results = await asyncio.gather(*[_safe_process(f) for f in films])
+        for n, u, url in results:
+            totals["new"] += n
+            totals["updated"] += u
+            if url:
+                seen_urls.add(url)
 
     pool = await get_pool()
     if seen_urls:

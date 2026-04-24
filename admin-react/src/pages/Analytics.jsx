@@ -92,9 +92,8 @@ export default function Analytics() {
   const handleSync = async () => {
     setSyncing(true); setSyncMsg('');
     try {
-      const res = await syncKarabas();
-      setSyncMsg(`✅ +${res.new} нових, ${res.updated} оновлено, всього ${res.total_active} подій`);
-      await load();
+      await syncKarabas();
+      setSyncMsg('✅ Синхронізацію розпочато — афіші оновляться за ~1 хв');
     } catch (e) {
       setSyncMsg(`❌ Помилка: ${e.message}`);
     } finally {
@@ -105,8 +104,8 @@ export default function Analytics() {
   const handleKinoSync = async () => {
     setKinoSyncing(true); setKinoSyncMsg('');
     try {
-      const res = await syncKino();
-      setKinoSyncMsg(`✅ +${res.new} нових, ${res.updated} оновлено, всього ${res.total_active} фільмів`);
+      await syncKino();
+      setKinoSyncMsg('✅ Синхронізацію розпочато — фільми оновляться за ~1 хв');
     } catch (e) {
       setKinoSyncMsg(`❌ Помилка: ${e.message}`);
     } finally {

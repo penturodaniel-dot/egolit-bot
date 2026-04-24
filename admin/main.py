@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request, Form, Depends
+from fastapi import FastAPI, Request, Form, Depends, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -563,33 +563,38 @@ async def buttons_delete(request: Request, btn_id: int):
 
 # ── Karabas sync ──────────────────────────────────────────────────────────
 
-@app.post("/api/sync-karabas")
-async def api_sync_karabas(request: Request):
-    """JSON endpoint: manually trigger Karabas scrape."""
-    if not request.session.get("authenticated"):
-        return JSONResponse({"error": "not authenticated"}, status_code=401)
+async def _run_karabas_bg():
     try:
         stats = await karabas_scrape_all()
-        return JSONResponse({"ok": True, "new": stats.get("new", 0), "updated": stats.get("updated", 0), "total_active": stats.get("total_active", 0)})
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+        _sched_logger.info("Manual Karabas sync done: %s", stats)
+    except Exception:
+        _sched_logger.exception("Manual Karabas sync failed")
+
+
+async def _run_kino_bg():
+    try:
+        stats = await kino_scrape_all()
+        _kino_logger.info("Manual kino-teatr sync done: %s", stats)
+    except Exception:
+        _kino_logger.exception("Manual kino-teatr sync failed")
+
+
+@app.post("/api/sync-karabas")
+async def api_sync_karabas(request: Request, background_tasks: BackgroundTasks):
+    """Start Karabas scrape in background (returns immediately to avoid 502 timeout)."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    background_tasks.add_task(_run_karabas_bg)
+    return JSONResponse({"ok": True, "status": "started", "new": 0, "updated": 0, "total_active": 0})
 
 
 @app.post("/api/sync-kino")
-async def api_sync_kino(request: Request):
-    """JSON endpoint: manually trigger kino-teatr.ua scrape."""
+async def api_sync_kino(request: Request, background_tasks: BackgroundTasks):
+    """Start kino-teatr.ua scrape in background (returns immediately to avoid 502 timeout)."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    try:
-        stats = await kino_scrape_all()
-        return JSONResponse({
-            "ok": True,
-            "new": stats.get("new", 0),
-            "updated": stats.get("updated", 0),
-            "total_active": stats.get("total_active", 0),
-        })
-    except Exception as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+    background_tasks.add_task(_run_kino_bg)
+    return JSONResponse({"ok": True, "status": "started", "new": 0, "updated": 0, "total_active": 0})
 
 
 @app.post("/sync-events")
