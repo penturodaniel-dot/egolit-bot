@@ -306,6 +306,10 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                 offset=0,
             )
 
+        # Track shown IDs to prevent duplicates on "load more"
+        shown_ids = [p.id for p in products] + [e.id for e in events]
+        await state.update_data(shown_ids=shown_ids)
+
         # Крок 3: AI генерує короткий вступ (1 речення)
         count = len(products) or len(events)
         ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
@@ -375,35 +379,42 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     event_category = data.get("last_event_category")
     category_names = data.get("last_category_names", [])
     max_price = data.get("last_max_price")
-
     date_filter = data.get("last_date_filter")
     search_text = data.get("last_search_text")
+    shown_ids: set = set(data.get("shown_ids", []))
 
     await callback.answer("Шукаю ще...")
 
     if intent == "event":
         if event_category == "кіно":
             results = await search_kino_events(
-                limit=5, offset=offset,
+                limit=10, offset=offset,
                 date_filter=date_filter, search_text=search_text,
             )
         else:
             results = await search_karabas_events(
-                category=event_category, limit=5, offset=offset,
+                category=event_category, limit=10, offset=offset,
                 date_filter=date_filter, search_text=search_text,
             )
+        # Filter already-shown items then take 5
+        results = [e for e in results if e.id not in shown_ids][:5]
         products, events = [], results
     else:
-        products = await search_products(
+        # Fetch extra to compensate for possible duplicates
+        raw = await search_products(
             category_names=category_names or None,
             max_price=max_price,
             search_text=search_text,
-            limit=5,
+            limit=10,
             offset=offset,
         )
+        products = [p for p in raw if p.id not in shown_ids][:5]
         events = []
 
-    await state.update_data(last_offset=offset)
+    # Save newly shown IDs
+    new_ids = [p.id for p in products] + [e.id for e in events]
+    shown_ids.update(new_ids)
+    await state.update_data(last_offset=offset, shown_ids=list(shown_ids))
 
     if not products and not events:
         await callback.message.answer(
