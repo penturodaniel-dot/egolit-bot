@@ -90,11 +90,30 @@ async def _save_lead(
     user_id: int, name: str, phone: str, username: str,
     category: str, details: str, budget: str, date: str, people: str
 ) -> None:
-    """Save lead to bot_leads. Adds missing columns on first run."""
+    """Save lead to bot_leads. Creates table if needed, adds missing columns."""
     pool = await get_pool()
 
-    # Ensure extra columns exist (safe migration)
-    for col, coltype in [("category", "TEXT"), ("budget", "TEXT"), ("date_needed", "TEXT"), ("people_count", "TEXT")]:
+    # Create table if it doesn't exist yet
+    await pool.execute("""
+        CREATE TABLE IF NOT EXISTS bot_leads (
+            id           SERIAL PRIMARY KEY,
+            name         TEXT,
+            phone        TEXT,
+            telegram_id  TEXT,
+            username     TEXT,
+            details      TEXT,
+            category     TEXT,
+            budget       TEXT,
+            date_needed  TEXT,
+            people_count TEXT,
+            status       TEXT NOT NULL DEFAULT 'new',
+            manager_note TEXT,
+            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+
+    # Ensure extra columns exist (safe migration for older DBs)
+    for col, coltype in [("category", "TEXT"), ("budget", "TEXT"), ("date_needed", "TEXT"), ("people_count", "TEXT"), ("manager_note", "TEXT")]:
         try:
             await pool.execute(f"ALTER TABLE bot_leads ADD COLUMN IF NOT EXISTS {col} {coltype}")
         except Exception:

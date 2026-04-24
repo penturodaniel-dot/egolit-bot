@@ -2,6 +2,9 @@
 Cloudinary image upload utility.
 Uses Cloudinary REST API directly via httpx (no SDK needed).
 Uploads images to the 'egolist-events' folder in Cloudinary.
+
+Strategy: pass the source URL directly to Cloudinary — their servers
+fetch the image themselves, bypassing any IP blocks on Railway.
 """
 from __future__ import annotations
 
@@ -16,18 +19,15 @@ from config import settings
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_URL = f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/image/upload"
 FOLDER = "egolist-events"
 
-DOWNLOAD_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-    "Referer": "https://gorod.dp.ua/",
-}
+
+def _upload_url() -> str:
+    return f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/image/upload"
 
 
 def _sign(params: dict) -> str:
     """Generate Cloudinary API signature: SHA-1 of sorted params + api_secret."""
-    # Sort params alphabetically, exclude api_key / resource_type / file
     exclude = {"api_key", "resource_type", "file"}
     parts = "&".join(
         f"{k}={v}"
@@ -40,26 +40,14 @@ def _sign(params: dict) -> str:
 
 async def upload_image(source_url: str, public_id: str) -> Optional[str]:
     """
-    Download image from source_url and upload to Cloudinary.
+    Upload image to Cloudinary by passing the source URL directly.
+    Cloudinary fetches the image from their side — no need to download it on Railway.
     Returns the Cloudinary secure_url or None on failure.
     """
     if not settings.CLOUDINARY_CLOUD_NAME or not settings.CLOUDINARY_API_KEY:
         return None
 
     try:
-        # Step 1: download original image
-        async with httpx.AsyncClient(
-            timeout=15,
-            follow_redirects=True,
-            headers=DOWNLOAD_HEADERS,
-        ) as client:
-            resp = await client.get(source_url)
-            if resp.status_code != 200 or "image" not in resp.headers.get("content-type", ""):
-                logger.warning("cloudinary: failed to download %s (HTTP %d)", source_url, resp.status_code)
-                return None
-            image_bytes = resp.content
-
-        # Step 2: upload to Cloudinary
         ts = int(time.time())
         params = {
             "folder": FOLDER,
@@ -68,21 +56,21 @@ async def upload_image(source_url: str, public_id: str) -> Optional[str]:
             "api_key": settings.CLOUDINARY_API_KEY,
         }
         params["signature"] = _sign(params)
+        # Pass source URL as 'file' — Cloudinary fetches it from their servers
+        params["file"] = source_url
 
         async with httpx.AsyncClient(timeout=30) as client:
-            upload_resp = await client.post(
-                UPLOAD_URL,
-                data=params,
-                files={"file": ("photo.jpg", image_bytes, "image/jpeg")},
-            )
-            if upload_resp.status_code != 200:
-                logger.warning("cloudinary: upload failed for %s: %s", public_id, upload_resp.text[:200])
-                return None
+            resp = await client.post(_upload_url(), data=params)
 
-            data = upload_resp.json()
-            url = data.get("secure_url")
-            logger.info("cloudinary: uploaded %s → %s", public_id, url)
-            return url
+        if resp.status_code != 200:
+            logger.warning("cloudinary: upload failed for %s: HTTP %d — %s",
+                           public_id, resp.status_code, resp.text[:300])
+            return None
+
+        data = resp.json()
+        url = data.get("secure_url")
+        logger.info("cloudinary: uploaded %s → %s", public_id, url)
+        return url
 
     except Exception as e:
         logger.warning("cloudinary: error uploading %s: %s", public_id, e)

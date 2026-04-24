@@ -425,12 +425,30 @@ async def on_startup():
     await init_egolist_products()
     asyncio.create_task(_nightly_events_loop())
     asyncio.create_task(_nightly_egolist_loop())
-    # Ensure new lead columns exist (safe migration)
+    # Ensure bot_leads table exists + all columns (safe migration)
     try:
         db = await get_db()
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_leads (
+                id           SERIAL PRIMARY KEY,
+                name         TEXT,
+                phone        TEXT,
+                telegram_id  TEXT,
+                username     TEXT,
+                details      TEXT,
+                category     TEXT,
+                budget       TEXT,
+                date_needed  TEXT,
+                people_count TEXT,
+                status       TEXT NOT NULL DEFAULT 'new',
+                manager_note TEXT,
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
         for col, coltype in [
             ("category", "TEXT"), ("budget", "TEXT"),
             ("date_needed", "TEXT"), ("people_count", "TEXT"),
+            ("manager_note", "TEXT"),
         ]:
             await db.execute(f"ALTER TABLE bot_leads ADD COLUMN IF NOT EXISTS {col} {coltype}")
         await db.close()
