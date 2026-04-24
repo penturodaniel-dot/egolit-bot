@@ -3,11 +3,12 @@
 ## Stack
 - **Language**: Python 3.11
 - **Bot framework**: aiogram 3
-- **DB**: PostgreSQL via asyncpg + `pg_trgm` extension (fuzzy search for events/kino)
+- **DB**: PostgreSQL via asyncpg + `pg_trgm` extension (fuzzy search for events)
 - **Admin panel**: FastAPI + React SPA (pre-built dist committed to repo)
 - **AI**: OpenAI gpt-4o-mini (intent parse + intro text + match reasons)
 - **HTTP scraping**: httpx + BeautifulSoup4
-- **Product search**: Egolist public API (`api.egolist.ua`) — no DB credentials needed
+- **Product & events search**: Egolist public API (`api.egolist.ua`) — no DB credentials needed
+- **Image hosting**: Cloudinary (folder `egolist-events/`) — for event photos
 
 ## Deployment
 - **Platform**: Railway
@@ -17,6 +18,7 @@
 - No manual deploy needed — just `git push origin main`
 - **Docker**: Python-only image (`python:3.11-slim`). No Node.js in Docker.
   React is pre-built locally and `admin-react/dist/` is committed to git.
+- **DB**: Railway-managed PostgreSQL (`nozomi.proxy.rlwy.net:33189/railway`)
 
 ## Project structure
 ```
@@ -40,10 +42,10 @@ egolist-bot/
 │   └── dist/                 # Pre-built production bundle (committed to git)
 ├── db/
 │   ├── connection.py         # asyncpg pool
-│   ├── queries.py            # search_products() → egolist_api; search_karabas/kino_events + pg_trgm
-│   ├── egolist_api.py        # Egolist public API client (47 categories, city filter, product parse)
+│   ├── queries.py            # search_products() + _search_egolist_events() + pg_trgm
+│   ├── egolist_api.py        # Egolist public API client (47 categories, city filter)
 │   ├── categories_cache.py   # Stub — delegates to egolist_api.get_categories_prompt()
-│   ├── menu_buttons.py       # MenuButton CRUD + seed defaults
+│   ├── menu_buttons.py       # MenuButton CRUD + seed defaults + prompt migrations
 │   ├── settings.py           # Key-value settings (get_setting, get_manager_online, etc.)
 │   ├── human_sessions.py     # Legacy human-mode session tracking (Telegram-based)
 │   ├── chat.py               # CRM: chat_sessions, chat_messages, quick_replies
@@ -52,16 +54,18 @@ egolist-bot/
 │   ├── parse.py              # ParsedIntent — AI parses user query; category_names (not IDs)
 │   └── respond.py            # format_intro() + generate_match_reasons()
 ├── scrapers/
-│   ├── karabas.py            # Scrapes dnipro.karabas.com (9 categories)
-│   └── kino_teatr.py         # Scrapes api.kino-teatr.ua (Dnipro cinemas, parallel asyncio.gather)
+│   ├── egolist.py            # Egolist products sync → egolist_products table
+│   └── egolist_events.py     # Egolist events API → egolist_events table (+Cloudinary upload)
+├── utils/
+│   └── cloudinary.py         # Cloudinary upload helper (pass URL, Cloudinary fetches)
 └── config.py                 # Settings from .env
 ```
 
 ## DB tables
 | Table | Purpose |
 |-------|---------|
-| `karabas_events` | Scraped from karabas.com |
-| `kino_events` | Scraped from kino-teatr.ua (films showing in Dnipro cinemas) |
+| `egolist_events` | Scraped from api.egolist.ua/api/events (all Dnipro events, 6 categories) |
+| `egolist_products` | Scraped from Egolist API (performers/venues) |
 | `menu_buttons` | Dynamic bot menu buttons |
 | `bot_leads` | Collected leads (name, phone, category, budget, date, people, details) |
 | `admin_settings` | Key-value: notification_chat_id, notification_enabled, manager_online, ai_prompt_extra |
@@ -72,85 +76,97 @@ egolist-bot/
 | `bot_places` | Admin-managed venues/performers (shown in bot search) |
 | `bot_events` | Admin-managed events (shown in bot search) |
 
-> **Note**: `products` and `events` tables (Egolist platform DB) are NO LONGER queried directly.
-> Product search now uses the public REST API at `api.egolist.ua`.
+> **Deprecated tables (removed)**: `karabas_events`, `kino_events` — replaced by unified `egolist_events`
 
 ## Key design decisions
 
 ### Bot
 - **IsDynamicButton(BaseFilter)** — only known button texts → dynamic_menu.router; everything else → search.router
 - **main_menu_keyboard()** lives in `bot/menu_cache.py` (NOT keyboards.py)
-- **ChatPersistenceMiddleware** — saves every incoming message to chat_sessions + chat_messages automatically, no handler changes needed
+- **ChatPersistenceMiddleware** — saves every incoming message to chat_sessions + chat_messages automatically
 - **Human mode check in search.py** — if `chat_sessions.status == 'human'`, AI skips; manager replies from web admin
-- **Human mode dual system**: old `human_sessions` (Telegram reply-based) + new `chat_sessions` (web CRM). Both coexist
-- **/start resets both human mode systems** — calls `end_human_session()` + `set_session_status(user_id, "ai")`
-- **"🚪 Вийти з чату" button** — inline keyboard shown on activation message and every `✉️ Передано менеджеру` reply; `callback_data="end_chat"` → ends session, notifies manager
-- **Lead flow states**: name → phone → category (inline buttons) → budget → date → people → details (all skippable except name/phone)
-- **Manager online/offline**: stored in `admin_settings.manager_online`; checked in `callback_start_chat` — if offline → redirect to lead form
-- **Search error handling**: `_do_search` catches all exceptions, shows user-friendly error message instead of hanging
+- **Human mode dual system**: old `human_sessions` (Telegram reply-based) + new `chat_sessions` (web CRM)
+- **/start resets both human mode systems** — `end_human_session()` + `set_session_status(user_id, "ai")`
+- **"🚪 Вийти з чату" button** — inline keyboard on every human-mode message
+- **Lead flow states**: name → phone → category (inline buttons) → budget → date → people → details
+- **Manager online/offline**: stored in `admin_settings.manager_online`; checked before starting chat
+- **Search error handling**: `_do_search` catches all exceptions, shows user-friendly error
+- **Card buttons**: events get "🔗 Детальніше" linking to source_url; products get "🔗 Детальніше" linking to `egolist.ua/products/{slug}`
 
 ### Admin panel — React SPA
-- FastAPI serves the pre-built React app from `admin-react/dist/`
+- FastAPI serves pre-built React app from `admin-react/dist/`
 - All non-API GET routes return `index.html` (SPA catch-all at bottom of main.py)
 - Static assets served from `/assets/` via `StaticFiles`
 - Session cookie auth shared between old Jinja2 routes and new JSON API
-- CORS enabled for `localhost:3000` (Vite dev proxy) — production is same-origin
 - **Rebuild workflow**: `cd admin-react && npm run build` → commit `dist/` → push
-- **Sync endpoints use BackgroundTasks** — return immediately (avoid Railway 30s timeout); scraping runs in background
+- **Sync endpoints use BackgroundTasks** — return immediately (avoid Railway 30s timeout)
+- **Sync progress UI** — Analytics polls `/api/sync-status` every 1.5s for live progress bars
 
 ### Egolist public API (product search)
 - **Base URL**: `https://api.egolist.ua/api`
 - **No auth required** — fully public
 - **Categories**: `GET /api/tree-categories` → 3 sections, 47 subcategories, each with UUID
-- **Products by category**: `GET /api/products/by-subcategory?category_id=UUID&city_slug=dnipro&page=1&per_page=20`
-- **City filter**: `city_slug` param is **ignored by the API** — client-side filter by `city.slug == "dnipro"` applied in `_parse_products()`
-- **Photos**: `first_image` field is a direct URL — no Spatie URL building needed
+- **Products**: `GET /api/products/by-subcategory?category_id=UUID&city_slug=dnipro&page=1`
+- **City filter**: `city_slug` param is **ignored** for products — client-side filter by `city.slug == "dnipro"`
+- **Photos**: `first_image` field is a direct URL on egolist.ua servers (works from anywhere)
 - **Contacts**: `phone`, `instagram`, `telegram`, `website` on product + `user.contractor_phone`
 - **Category mapping**: `db/egolist_api.py` → `CATEGORIES` dict: Ukrainian name → UUID
-- **AI returns**: `category_names: ["ведучі", "фото та відеозйомка"]` — mapped to UUIDs in `names_to_uuids()`
+- **AI returns**: `category_names: ["ведучі", "фото та відеозйомка"]` — mapped to UUIDs
+
+### Egolist Events API (consolidated afisha)
+- **Base URL**: `https://api.egolist.ua/api/events?city_slug=dnipro&per_page=50&page=N`
+- **City filter**: `city_slug` **works** for events (unlike products) — server-side filter
+- **6 event types** via slug:
+  - `koncerti` → концерти
+  - `vistavi` → виставки
+  - `kino` → кіно
+  - `dlia-ditei` → для дітей
+  - `aktivnii-vidpocinok` → активний відпочинок
+  - `maister-klasi` → майстер-класи
+- **~248 active Dnipro events**
+- **Images**: `image_links[0]` array — URLs from `gorod.dp.ua` (see "Known issues" below)
+- **Date format**: DD.MM.YYYY in API → parsed to PostgreSQL DATE
+- **Source URL**: `source_url` field → links to gorod.dp.ua event page
+- Replaces both old Karabas scraper AND kino-teatr scraper — one unified source
+
+### Cloudinary integration (event images)
+- **Credentials**: `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` in `.env`
+- **Folder**: `egolist-events/` — one image per event with `public_id = event_{api_id}`
+- **Strategy**: pass source URL to Cloudinary upload API as `file` parameter → Cloudinary fetches itself
+  (avoids downloading on Railway, which saves bandwidth)
+- **DB column**: `egolist_events.cloudinary_url` — populated on first scrape
+- **Bot logic**: `_send_event_card` uses `URLInputFile` for Cloudinary URLs (no httpx download needed)
+- **Fallback**: if `cloudinary_url` is NULL → falls back to `image_url` (raw gorod.dp.ua)
+- **Code**: `utils/cloudinary.py` — signature via SHA-1, no SDK needed
 
 ### Search — multilingual + fuzzy (3 layers)
-1. **AI normalization** — GPT normalizes `search_text` to Ukrainian:
-   "Оля Цыбульская" → "Оля Цибульська" (instruction in `BASE_PROMPT_TEXT`)
+1. **AI normalization** — GPT normalizes `search_text` to Ukrainian
+   ("Оля Цыбульская" → "Оля Цибульська")
 2. **Python transliteration fallback** — `_normalize_search()` in `ai/parse.py`
    maps: `ы→и`, `э→е`, `ё→е`, `ъ→""`
-3. **pg_trgm fuzzy search** — used for `karabas_events` and `kino_events` (not products — those use API)
-   `_ensure_trgm()` enables extension once per process; queries add `OR similarity(title, $N) > 0.25`
+3. **pg_trgm fuzzy search** — used for `egolist_events`
+   `_ensure_trgm()` enables extension; queries add `OR similarity(title, $N) > 0.25`
 4. **Multi-word ILIKE** — search_text split into words (≥3 chars), OR per word
 
-### AI category system (IMPORTANT — changed from integer IDs)
-- **Old**: AI returned `category_ids: [155, 101]` (integer IDs from Egolist PostgreSQL)
-- **New**: AI returns `category_names: ["фото та відеозйомка", "музиканти"]` (strings from our list)
-- `ParsedIntent.category_names: list[str]` — replaces old `category_ids: list[int]`
-- FSM state key: `last_category_names` (was `last_category_ids`)
-- `db/categories_cache.py` is now a stub — `load_categories()` is a no-op; prompt comes from `egolist_api.get_categories_prompt()`
-- 47 categories in 3 sections: СПЕЦІАЛІСТИ / ЛОКАЦІЇ / ОБЛАДНАННЯ
-
-### Cinema scraper (kino-teatr.ua)
-- `scrapers/kino_teatr.py` — scrapes `api.kino-teatr.ua` REST API, city_id=5 (Dnipro)
-- Tries multiple endpoint patterns (`/films/now-showing`, `/films`, `/schedule` by date)
-- Parallel processing with `asyncio.gather` + `Semaphore(10)` — fast, no timeout
-- Stores one row per film in `kino_events` (date_from/date_to range, cinema_name list)
-- `event_category = "кіно"` → `search_kino_events()` in `db/queries.py`
-- Nightly scheduler at 00:10 (Karabas at 00:00)
-- Manual sync: `POST /api/sync-kino` → "Оновити кіно" button (purple) in Analytics
-
-### Karabas scraper
-- `_parse_iso()` returns `datetime.date` and `datetime.time` objects (asyncpg requirement, NOT strings)
-- Ukrainian locale is default — URLs are `/{slug}/` (no `/ua/` prefix)
-- Trailing commas in JSON-LD fixed with `re.sub(r",\s*([}\]])", r"\1", text)`
-- Manual sync: `POST /api/sync-karabas` → "Оновити афіші Karabas" button (green) in Analytics
+### AI category system
+- AI returns `category_names: ["фото та відеозйомка", "музиканти"]` (strings)
+- `ParsedIntent.category_names: list[str]`
+- FSM state key: `last_category_names`
+- `event_category`: `"концерти"|"виставки"|"кіно"|"для дітей"|"активний відпочинок"|"майстер-класи"|null`
+- `_CATEGORY_TO_SLUG` dict in `queries.py` maps event_category → egolist event_slug
 
 ### Sync endpoints (BackgroundTasks pattern)
-Both `/api/sync-karabas` and `/api/sync-kino` return **immediately** with `{"ok": true, "status": "started"}`.
-The actual scraping runs in `BackgroundTasks` to avoid Railway's 30-second HTTP timeout.
-The Analytics UI shows "Синхронізацію розпочато — оновиться за ~1 хв".
+- `POST /api/sync-events` — scrape afisha (egolist_events)
+- `POST /api/sync-egolist` — scrape products (egolist_products)
+- Both return **immediately** with `{"ok": true, "status": "started"}`
+- Actual scraping runs in `BackgroundTasks` to avoid Railway's 30s HTTP timeout
+- Progress tracked in global `_sync_state` dict; polled via `/api/sync-status`
+- Nightly schedulers: events at 00:00, products at 01:00
 
 ## Admin panel routes
 | Route | Description |
 |-------|-------------|
 | `/` | React SPA (all routes handled client-side) |
-| `/sync-events` | Manual Karabas scrape trigger (POST, legacy server-side) |
 
 ### Full JSON API (admin/main.py)
 | Endpoint | Description |
@@ -170,9 +186,9 @@ The Analytics UI shows "Синхронізацію розпочато — оно
 | `GET /api/analytics` | Analytics data as JSON |
 | `GET /api/leads` | Leads list |
 | `POST /api/leads/{id}/status` | Update lead status + note |
-| `GET/POST /api/settings` | Admin settings (notification_chat_id, etc.) |
+| `GET/POST /api/settings` | Admin settings |
 | `POST /api/settings/test-notification` | Send test Telegram notification |
-| `GET /api/prompt` | Returns `ai_prompt_extra` + `base_prompt` (BASE_PROMPT_TEXT) |
+| `GET /api/prompt` | Returns `ai_prompt_extra` + `base_prompt` |
 | `POST /api/prompt` | Save extra AI instructions (live, no restart) |
 | `GET/POST /api/buttons` | Menu buttons list / create |
 | `PUT/DELETE /api/buttons/{id}` | Update / delete button |
@@ -183,93 +199,97 @@ The Analytics UI shows "Синхронізацію розпочато — оно
 | `GET/POST /api/content/events` | bot_events list / create |
 | `PUT/DELETE /api/content/events/{id}` | Update / delete event |
 | `POST /api/content/events/{id}/toggle` | Toggle published |
-| `POST /api/sync-karabas` | Start Karabas scrape in background |
-| `POST /api/sync-kino` | Start kino-teatr.ua scrape in background |
+| `POST /api/sync-events` | Start Egolist events (afisha) scrape in background |
+| `POST /api/sync-egolist` | Start Egolist products scrape in background |
+| `GET /api/sync-status` | Live progress of both sync jobs |
 
 ## chat_messages field names (important!)
 - Text content field: **`content`** (NOT `text`)
 - Timestamp field: **`sent_at`** (NOT `created_at`)
 - Direction: `in` (from user) / `out` (from admin/bot)
 - Read status: **`is_read`** (BOOLEAN, default FALSE)
-  - For `direction='in'`: set TRUE by `mark_session_read()` when admin opens chat
-  - For `direction='out'`: set TRUE automatically in `save_message()` when client sends any new message (proxy read receipt)
 
 ## AI prompt architecture
 - `BASE_PROMPT_TEXT` — module-level constant in `ai/parse.py`
-- `_build_system_prompt(extra)` — formats categories into prompt + appends admin extra instructions
+- `_build_system_prompt(extra)` — formats categories + appends admin extra instructions
 - `ai_prompt_extra` — loaded from DB on every `parse_intent()` call (live without restart)
-- `GET /api/prompt` returns both `base_prompt` (read-only display) and `ai_prompt_extra` (editable)
-- Categories prompt: generated from `db/egolist_api.get_categories_prompt()` — static dict, no DB call
-
-## Notification system
-- New lead → Telegram notification to `notification_chat_id`
-- Notification includes: name, phone, username, category, budget, date, people, details
-- `notification_enabled` toggle in admin Settings
-
-## Bot lead flow (7 steps)
-1. Name
-2. Phone / Telegram username
-3. Category — inline buttons: День народження / Корпоратив / Побачення / Захід / Виконавець / Питання / Інше
-4. Budget (skippable)
-5. Date (skippable)
-6. People count (skippable)
-7. Details / description (skippable)
-
-## CRM Chat system
-- Session list (left) / messages (center) / client info + quick replies (right)
-- Manager online/offline toggle (stored in admin_settings)
-- When offline → bot shows "офлайн" message + redirects to lead form
-- When online → "Живий чат" button starts human mode
-- Admin sends message → Bot API → saved to DB
-- Real-time updates: polls `/api/sessions/{id}/messages?after_id=N` every 2s
-- Browser notifications + sound alert on new unread messages
-- Tags: hot/cold/vip per session
-- Quick replies: saved scripts, one-click insert into input
-- **Read receipts**: `✓` (grey) = sent to Telegram; `✓✓` (blue) = client read (is_read=TRUE)
-- **No optimistic updates**: send fetches real message immediately after API responds (prevents duplicates)
-- **Bubble layout**: `.bubble-wrap { flex:1; min-width:0; max-width:68% }` wraps bubble+meta
-
-## Content management
-- **bot_places**: own venues/performers searchable by bot
-  - Fields: name, category, description, district, address, price_from/to, for_who, tags, phone, instagram, telegram, website, booking_url, photo_url, city, is_published, is_featured, priority
-- **bot_events**: own events searchable by bot
-  - Fields: title, description, category, date, time, price, place_name, place_address, tags, photo_url, ticket_url, city, is_published, is_featured, priority
-- `is_featured = TRUE` → appears first in bot search results
-- `priority` (0–100) → sort order within bot results
+- Categories prompt from `db/egolist_api.get_categories_prompt()` — static dict
+- Button prompts in `db/menu_buttons.py` → `_DEFAULT_BUTTONS` + `_PROMPT_MIGRATIONS`
+  (migrations auto-fix stale prompts in existing DBs)
 
 ## AI flow
 1. `parse_intent(user_text, history)` → `ParsedIntent`
    - intent: service | event | lead | other
-   - `category_names` (list of strings), `event_category`, `max_price`, `search_text`, `date_filter`, `needs_clarification`
-   - `needs_clarification = true` ONLY for completely meaningless input ("привіт", "?")
-   - City is always Дніпро — never ask the user about it
+   - `category_names` (list), `event_category`, `max_price`, `search_text`, `date_filter`
+   - City is always Дніпро — never ask the user
 2. Search routing:
-   - `intent=service` → `search_products()` → Egolist API + bot_places
-   - `intent=event, event_category="кіно"` → `search_kino_events()` → kino_events table
-   - `intent=event, other` → `search_karabas_events()` → karabas_events table + bot_events
+   - `intent=service` → `search_products()` → egolist_products table + bot_places
+   - `intent=event` → `_search_egolist_events()` → egolist_events table + bot_events
 3. `format_intro()` → 1-sentence intro text
-4. `generate_match_reasons()` → list of per-result explanations (one API call)
-5. Cards sent one by one with photo (fallback to text), reason shown as ✅ italic line
+4. `generate_match_reasons()` → per-result explanations (one API call)
+5. Cards sent one by one with photo, reason shown as ✅ italic line
+
+## Known issues
+
+### gorod.dp.ua geo-blocking
+`gorod.dp.ua` (the source of event images via `image_links`) **blocks all non-Ukrainian IPs**
+with HTTP 403. Confirmed blocked:
+- ❌ Railway (US/EU servers)
+- ❌ Cloudinary fetch API (global CDN)
+- ❌ weserv.nl, statically.io, photon (image proxies)
+- ❌ corsproxy.io, allorigins (CORS proxies)
+- ✅ Only Ukrainian-resident IPs work
+
+**Consequence**: `cloudinary_url` stays NULL because Cloudinary can't fetch the images.
+Bot falls back to `image_url` but Telegram's fetch also fails → event cards sent as text only.
+
+**Workarounds** (pick one):
+1. **Ukrainian HTTP proxy** — configure `httpx.AsyncClient(proxy=...)` in `utils/cloudinary.py`
+   with a Ukrainian proxy service (proxy6.net, smartproxy, ~$3-5/mo)
+2. **Local sync** — run `scrapers/egolist_events.py` from a Ukrainian-resident machine;
+   it uploads to Cloudinary and writes `cloudinary_url` to the shared Railway DB
+3. **Skip event photos** — remove photo logic for events, show text-only cards
 
 ## Known bugs fixed
-- **asyncpg date type** — `_parse_iso()` returns `datetime.date`/`datetime.time` (not strings)
-- **aiogram routing** — `IsDynamicButton(BaseFilter)` prevents free-text handler eating button presses
-- **Karabas URL** — `/concerts/` not `/ua/concerts/`
+- **asyncpg date type** — parse to `datetime.date`/`datetime.time` (not strings)
+- **aiogram routing** — `IsDynamicButton(BaseFilter)` prevents free-text eating button presses
 - **TelegramBadRequest tel: links** — phone shown as text only, no tel: in inline buttons
 - **Import error** — `main_menu_keyboard` is in `bot/menu_cache.py`
-- **Node.js in Dockerfile crashed Railway** — reverted to Python-only image; React dist pre-built and committed
-- **Human mode stuck** — `/start` now resets both `human_sessions` and `chat_sessions.status`
-- **Bot silent on errors** — `_do_search` wraps all logic in try/except, shows error message to user
+- **Node.js in Dockerfile** — reverted to Python-only; React dist pre-built and committed
+- **Human mode stuck** — `/start` resets both `human_sessions` and `chat_sessions.status`
+- **Bot silent on errors** — `_do_search` wraps all logic in try/except
 - **AI asking "which city?"** — `BASE_PROMPT_TEXT` explicitly forbids city questions
-- **Chat messages empty in CRM** — fixed `msg.text→msg.content` and `msg.created_at→msg.sent_at` in `Chats.jsx`
-- **Russian search queries** — 3-layer normalization: AI transliteration + Python fallback + pg_trgm fuzzy
-- **Chat bubble text on separate lines** — `.bubble-wrap` flex wrapper with `max-width:68%`
-- **Sent messages duplicated in chat** — removed optimistic update; fetch real message immediately after send
-- **✓✓ shown immediately** — now conditional on `msg.is_read` from DB
-- **Double /api in sync URLs** — `syncKarabas`/`syncKino` in api.js used `/api/sync-*` but BASE already `/api`; fixed to `/sync-*`
-- **502 timeout on sync** — scrape runs in FastAPI `BackgroundTasks`; endpoint returns instantly
-- **Products from other cities (Vinnytsia)** — `city_slug` param ignored by API; client-side filter `city.slug == "dnipro"` added in `_parse_products()`
-- **Human mode no exit button** — `END_CHAT_KB` inline button on every human-mode message; `callback_data="end_chat"` handler ends session
+- **Chat messages empty in CRM** — fixed `msg.text→msg.content`, `msg.created_at→msg.sent_at`
+- **Russian search queries** — 3-layer normalization (AI + Python + pg_trgm)
+- **Sent messages duplicated** — removed optimistic update; fetch real message after send
+- **Double /api in sync URLs** — api.js BASE already has `/api`; paths use `/sync-*`
+- **502 timeout on sync** — scrape runs in FastAPI `BackgroundTasks`
+- **Products from other cities** — client-side filter `city.slug == "dnipro"` in `_parse_products`
+- **Human mode no exit** — `END_CHAT_KB` inline button, `callback_data="end_chat"`
+- **Wrong AI routing for menu buttons** — button prompts now explicitly mention event/concert/show
+- **bot_leads table missing** — was never created, only `ALTER TABLE` calls; added `CREATE TABLE IF NOT EXISTS` in both `lead.py` and `admin/main.py` startup
+- **Undefined `_egolist_logger`** — renamed to unified `_sched_logger` during karabas/kino consolidation
+- **Event photos blocked** — added httpx download with Referer header; then Cloudinary integration
+  (but gorod.dp.ua still blocks non-UA IPs — see "Known issues")
+- **Karabas + kino scrapers removed** — consolidated into single `egolist_events` scraper using
+  Egolist's own event API (6 categories, city_slug works server-side)
+
+## Environment variables (.env)
+```
+BOT_TOKEN=...
+OPENAI_API_KEY=...
+DB_HOST=nozomi.proxy.rlwy.net
+DB_PORT=33189
+DB_NAME=railway
+DB_USER=postgres
+DB_PASSWORD=...
+ADMIN_LOGIN=admin
+ADMIN_PASSWORD=...
+MANAGER_TELEGRAM_ID=0
+CLOUDINARY_CLOUD_NAME=dqwsfvuon
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
+```
 
 ## Railway deploy workflow
 ```bash
@@ -290,7 +310,7 @@ git push origin main
 |---------|--------|
 | Free-form text + quick start buttons | ✅ |
 | AI intent classification + clarification | ✅ |
-| 3–5 recommendations with photos | ✅ |
+| 3–5 recommendations with photos | ✅ (events photos need UA proxy) |
 | "Why this fits" explanation per card | ✅ |
 | More results (pagination) | ✅ |
 | Date filters (today/weekend/week/month) | ✅ |
@@ -301,13 +321,14 @@ git push origin main
 | Full chat history storage | ✅ |
 | CRM chat admin (React SPA) | ✅ |
 | AI prompt editor | ✅ |
-| Analytics dashboard | ✅ |
+| Analytics dashboard (with live sync progress) | ✅ |
 | Content management | ✅ |
-| Karabas scraper + nightly sync | ✅ |
-| Cinema scraper (kino-teatr.ua) + nightly sync | ✅ |
-| Egolist public API for product search | ✅ |
+| Egolist events scraper (unified afisha) | ✅ |
+| Egolist products scraper | ✅ |
+| Cloudinary integration for event photos | ✅ (blocked by gorod.dp.ua geo-restriction) |
 | Dynamic menu buttons (full CRUD) | ✅ |
 | React admin panel (full JSON API) | ✅ |
-| pg_trgm fuzzy search (events/kino) | ✅ |
+| pg_trgm fuzzy search (events) | ✅ |
 | Exit chat button in human mode | ✅ |
 | City filter for product search (Dnipro only) | ✅ |
+| "🔗 Детальніше" button on all cards | ✅ |
