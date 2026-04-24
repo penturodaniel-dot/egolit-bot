@@ -238,7 +238,10 @@ async def _upsert(item: dict) -> tuple[int, int]:
     image_url: Optional[str] = None
     images = item.get("image_links") or []
     if images and isinstance(images, list) and isinstance(images[0], str):
-        image_url = images[0]
+        raw_url = images[0]
+        # Replace thumbnail suffix (e.g. _240) with _800 for a larger image.
+        # gorod.dp.ua stores: filename_240.jpg (thumb), filename_800.jpg, filename.jpg (original)
+        image_url = re.sub(r'_\d+(\.\w+)$', r'_800\1', raw_url)
 
     source_url = (item.get("source_url") or "").strip() or None
     if not source_url:
