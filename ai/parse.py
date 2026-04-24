@@ -161,10 +161,14 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
         model="gpt-5-mini",
         messages=messages,
         response_format={"type": "json_object"},
-        max_completion_tokens=300,
+        max_completion_tokens=600,
+        reasoning_effort="minimal",
     )
 
     raw = response.choices[0].message.content
+    if not raw:
+        # Fallback on empty response from model
+        raw = '{"intent":"other","category_names":[],"event_category":null,"search_text":null,"date_filter":null,"max_price":null,"needs_clarification":true,"clarification_question":"Уточни, будь ласка, що саме шукаєш?"}'
     data = json.loads(raw)
 
     # category_names — масив рядків

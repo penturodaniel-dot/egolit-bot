@@ -202,6 +202,8 @@ async def _send_results(
     user_query: str = "",
 ):
     """Відправляє AI-текст і картки результатів."""
+    if not (ai_text or "").strip():
+        ai_text = "Ось що знайшов 👇" if (products or events) else "На жаль, нічого не знайдено."
     await message.answer(ai_text, parse_mode="HTML")
     try:
         if message.from_user:

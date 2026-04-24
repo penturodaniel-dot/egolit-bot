@@ -49,9 +49,14 @@ async def format_intro(
             {"role": "system", "content": INTRO_PROMPT},
             {"role": "user", "content": task},
         ],
-        max_completion_tokens=80,
+        max_completion_tokens=200,
+        reasoning_effort="minimal",
     )
-    return response.choices[0].message.content
+    text = (response.choices[0].message.content or "").strip()
+    if not text:
+        # Fallback if model returns empty
+        text = "Ось що знайшов 👇" if has_results else "На жаль, нічого не знайдено. Спробуй інший запит або натисни '📝 Залишити заявку'."
+    return text
 
 
 async def generate_match_reasons(
@@ -97,7 +102,8 @@ async def generate_match_reasons(
                 {"role": "system", "content": REASONS_PROMPT},
                 {"role": "user", "content": task},
             ],
-            max_completion_tokens=400,
+            max_completion_tokens=800,
+            reasoning_effort="minimal",
         )
         raw = response.choices[0].message.content.strip()
         reasons = json.loads(raw)
