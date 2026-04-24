@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 BASE = "https://api.egolist.ua/api"
 CITY_SLUG = "dnipro"
+# Accept any slug that corresponds to Dnipro / Dnipropetrovsk
+DNIPRO_CITY_SLUGS = {"dnipro", "dnipropetrovsk", "dnieper", "dniepropetrovsk", "dnepropetrovsk", "dnepr"}
 
 HEADERS = {
     "User-Agent": (
@@ -274,7 +276,7 @@ def _parse_products(items: list[dict]) -> list["ProductResult"]:
             city_slug_val = ""
             city_name = "Дніпро"
         # Пропускаємо продукти з іншого міста (не Дніпро і не порожній slug)
-        if city_slug_val and city_slug_val != CITY_SLUG:
+        if city_slug_val and city_slug_val not in DNIPRO_CITY_SLUGS:
             continue
 
         # Контакти — є на рівні продукту і в об'єкті user

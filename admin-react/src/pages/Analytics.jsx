@@ -122,6 +122,7 @@ export default function Analytics() {
   const handoffs = data?.handoffs ?? 0;
   const conversion = data?.conversion ?? 0;
   const eventsActive = data?.events_active ?? 0;
+  const kinoActive = data?.kino_active ?? 0;
   const leadsByCat = data?.leads_by_category || [];
   const maxLeadCat = leadsByCat.length ? Math.max(...leadsByCat.map(c => c.count), 1) : 1;
 
@@ -193,6 +194,7 @@ export default function Analytics() {
               <StatCard label="Заявок сьогодні" value={leads.today}   sub="за сьогодні" />
               <StatCard label="Конверсія"       value={`${conversion}%`} sub="заявок від діалогів" accent color="var(--accent2)" />
               <StatCard label="Активних афіш"   value={eventsActive}  sub="Karabas" />
+              <StatCard label="Фільмів у кіно"  value={kinoActive}    sub="kino-teatr.ua" accent color="#7c3aed" />
             </div>
 
             {/* Charts */}

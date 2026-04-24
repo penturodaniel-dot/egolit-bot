@@ -9,7 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ai.parse import parse_intent
 from ai.respond import format_intro, generate_match_reasons
-from db.queries import search_products, search_events, search_karabas_events, search_kino_events, ProductResult, EventResult
+from db.queries import search_products, search_karabas_events, search_kino_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard
 from bot.states import SearchFlow
@@ -297,8 +297,6 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                     date_filter=date_filter,
                     search_text=search_text,
                 )
-            if not events:
-                events = await search_events(limit=5)
         else:
             products = await search_products(
                 category_names=parsed.category_names or None,
@@ -394,8 +392,6 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
                 category=event_category, limit=5, offset=offset,
                 date_filter=date_filter, search_text=search_text,
             )
-        if not results:
-            results = await search_events(limit=5)
         products, events = [], results
     else:
         products = await search_products(

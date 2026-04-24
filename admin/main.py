@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 REACT_DIST = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "admin-react", "dist"))
 REACT_INDEX = os.path.join(REACT_DIST, "index.html")
 from config import settings
+from db.settings import get_setting as db_get_setting, set_setting as db_set_setting, init_settings as db_init_settings
 from db.content import (
     init_content_tables,
     get_all_places, get_place, create_place, update_place, delete_place, toggle_place_published,
@@ -419,6 +420,7 @@ async def _nightly_kino_loop():
 
 @app.on_event("startup")
 async def on_startup():
+    await db_init_settings()
     await init_menu_buttons()
     await init_chat_tables()
     await init_content_tables()
@@ -867,15 +869,8 @@ async def api_delete_session(request: Request, session_id: int):
 async def api_manager_status_get(request: Request):
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
-    db = await get_db()
-    await db.execute("""
-        CREATE TABLE IF NOT EXISTS admin_settings (
-            key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT ''
-        )
-    """)
-    row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'manager_online'")
-    await db.close()
-    online = (row["value"] == "1") if row else False
+    val = await db_get_setting("manager_online", "0")
+    online = val == "1"
     return JSONResponse({"online": online})
 
 
@@ -885,12 +880,7 @@ async def api_manager_status_set(request: Request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     body = await request.json()
     online = body.get("online", False)
-    db = await get_db()
-    await db.execute("""
-        INSERT INTO admin_settings (key, value) VALUES ('manager_online', $1)
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-    """, "1" if online else "0")
-    await db.close()
+    await db_set_setting("manager_online", "1" if online else "0")
     return JSONResponse({"ok": True, "online": online})
 
 
@@ -1025,10 +1015,17 @@ async def api_analytics(request: Request):
     except Exception:
         pass
 
-    # Events count
+    # Karabas events count
     events_count = 0
     try:
         events_count = await db.fetchval("SELECT COUNT(*) FROM karabas_events WHERE is_active=TRUE") or 0
+    except Exception:
+        pass
+
+    # Kino events count
+    kino_count = 0
+    try:
+        kino_count = await db.fetchval("SELECT COUNT(*) FROM kino_events WHERE is_active=TRUE") or 0
     except Exception:
         pass
 
@@ -1076,6 +1073,7 @@ async def api_analytics(request: Request):
         },
         "handoffs": int(handoffs),
         "events_active": int(events_count),
+        "kino_active": int(kino_count),
         "conversion": conversion,
         "leads_by_category": leads_by_cat,
         "charts": {
