@@ -141,6 +141,9 @@ def names_to_uuids(names: list[str]) -> list[str]:
 
 # ── HTTP пошук продуктів ──────────────────────────────────────────────────────
 
+FETCH_PER_PAGE = 50  # API ignores city_slug — fetch large batch, filter client-side
+
+
 async def search_products_api(
     category_names: list[str] | None = None,
     max_price: int | None = None,
@@ -151,10 +154,16 @@ async def search_products_api(
     """
     Шукає виконавців/локації через Egolist public API.
     Повертає список ProductResult (той самий dataclass що і раніше).
+
+    NOTE: API ignores city_slug parameter — it returns results from all cities.
+    We compensate by fetching FETCH_PER_PAGE (50) items per request and filtering
+    client-side. Page advances every FETCH_PER_PAGE offset units; the caller's
+    shown_ids deduplication in search.py prevents duplicates across calls.
     """
     from db.queries import ProductResult
 
-    page = (offset // limit) + 1
+    # Page advances only after FETCH_PER_PAGE items have been consumed
+    page = (offset // FETCH_PER_PAGE) + 1
     results: list[ProductResult] = []
     seen_ids: set = set()
 
@@ -168,7 +177,7 @@ async def search_products_api(
                     "category_id": uuid,
                     "city_slug": CITY_SLUG,
                     "page": page,
-                    "per_page": limit,
+                    "per_page": FETCH_PER_PAGE,
                 }
                 if search_text:
                     params["search"] = search_text
@@ -188,7 +197,7 @@ async def search_products_api(
             params = {
                 "city_slug": CITY_SLUG,
                 "page": page,
-                "per_page": limit * 2,
+                "per_page": FETCH_PER_PAGE,
             }
             if search_text:
                 params["search"] = search_text
