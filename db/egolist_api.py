@@ -265,9 +265,17 @@ def _parse_products(items: list[dict]) -> list["ProductResult"]:
         cat = item.get("category") or {}
         cat_name = (cat.get("name") or cat.get("title") or "") if isinstance(cat, dict) else str(cat)
 
-        # Місто
+        # Місто — API ігнорує city_slug, тому фільтруємо вручну
         city_obj = item.get("city") or {}
-        city_name = (city_obj.get("name") or "Дніпро") if isinstance(city_obj, dict) else "Дніпро"
+        if isinstance(city_obj, dict):
+            city_slug_val = city_obj.get("slug") or ""
+            city_name = city_obj.get("name") or "Дніпро"
+        else:
+            city_slug_val = ""
+            city_name = "Дніпро"
+        # Пропускаємо продукти з іншого міста (не Дніпро і не порожній slug)
+        if city_slug_val and city_slug_val != CITY_SLUG:
+            continue
 
         # Контакти — є на рівні продукту і в об'єкті user
         user = item.get("user") or {}

@@ -11,7 +11,7 @@ Human-mode handlers:
 import logging
 from aiogram import Router, F, Bot
 from aiogram.filters import BaseFilter, Command
-from aiogram.types import Message
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 
 from config import settings
 from db.human_sessions import (
@@ -25,6 +25,10 @@ from bot.menu_cache import main_menu_keyboard
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+END_CHAT_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="🚪 Вийти з чату з менеджером", callback_data="end_chat")
+]])
 
 
 # ── Filters ───────────────────────────────────────────────────────────────
@@ -61,10 +65,9 @@ async def activate_human_mode(chat_id: int, user, bot: Bot) -> None:
 
     msg_text = (
         "💬 <b>Підключаємо менеджера...</b>\n\n"
-        "Пиши — менеджер відповість найближчим часом.\n"
-        "Щоб завершити чат, надішли /endchat"
+        "Пиши — менеджер відповість найближчим часом."
     )
-    await bot.send_message(chat_id, msg_text)
+    await bot.send_message(chat_id, msg_text, reply_markup=END_CHAT_KB)
     try:
         await save_outgoing_message(user.id, msg_text)
     except Exception:
@@ -106,7 +109,7 @@ async def forward_to_manager(message: Message, bot: Bot) -> None:
     # Remember which user sent this so manager reply can be routed back
     reply_map[sent.message_id] = user.id
 
-    await message.answer("✉️ Передано менеджеру")
+    await message.answer("✉️ Передано менеджеру", reply_markup=END_CHAT_KB)
 
 
 # ── Intercept all user text while in human mode ───────────────────────────
@@ -161,6 +164,28 @@ async def manager_end_chat(message: Message, bot: Bot) -> None:
         )
     except Exception as e:
         logger.warning(f"Could not notify user {target_id}: {e}")
+
+
+# ── "Вийти з чату" inline button callback ────────────────────────────────
+
+@router.callback_query(F.data == "end_chat")
+async def callback_end_chat(callback: CallbackQuery, bot: Bot) -> None:
+    user = callback.from_user
+    await end_human_session(user.id)
+    try:
+        await set_session_status(user.id, "ai")
+    except Exception:
+        pass
+    await callback.answer("Чат завершено")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "✅ Чат завершено. Дякуємо!\n\nЧим ще можу допомогти?",
+        reply_markup=main_menu_keyboard(),
+    )
+    mgr_id = settings.MANAGER_TELEGRAM_ID
+    if mgr_id:
+        tg_ref = f"@{user.username}" if user.username else str(user.id)
+        await bot.send_message(mgr_id, f"🔴 Чат завершено клієнтом: {tg_ref} (id: {user.id})")
 
 
 # ── Manager reply → route back to user ───────────────────────────────────
