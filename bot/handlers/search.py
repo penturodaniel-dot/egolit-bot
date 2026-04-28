@@ -11,7 +11,7 @@ from ai.parse import parse_intent
 from ai.respond import format_intro, generate_match_reasons
 from db.queries import search_products, search_karabas_events, search_kino_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
-from bot.keyboards import results_keyboard
+from bot.keyboards import results_keyboard, manager_choice_keyboard
 from bot.states import SearchFlow
 
 router = Router()
@@ -174,22 +174,31 @@ async def _send_results(
     user_query: str = "",
 ):
     """Відправляє AI-текст і картки результатів."""
+    items = products or events
+
+    # ── Нічого не знайдено — одне чітке повідомлення з кнопками менеджера ──
+    if not items:
+        not_found_text = (
+            "😔 На жаль, нічого не знайдено за твоїм запитом.\n\n"
+            "Наш менеджер зможе допомогти підібрати варіант особисто 👇"
+        )
+        await message.answer(not_found_text, reply_markup=manager_choice_keyboard())
+        try:
+            if message.from_user:
+                await save_outgoing_message(message.from_user.id, not_found_text)
+        except Exception:
+            pass
+        return
+
+    # ── Є результати — вступний AI-текст ──
     if not (ai_text or "").strip():
-        ai_text = "Ось що знайшов 👇" if (products or events) else "На жаль, нічого не знайдено."
+        ai_text = "Ось що знайшов 👇"
     await message.answer(ai_text, parse_mode="HTML")
     try:
         if message.from_user:
             await save_outgoing_message(message.from_user.id, ai_text)
     except Exception:
         pass
-
-    items = products or events
-    if not items:
-        await message.answer(
-            "Нічого не знайдено. Спробуй змінити запит або поговори з менеджером.",
-            reply_markup=results_keyboard(has_more=False),
-        )
-        return
 
     # Generate "why this fits" reasons for all results in one AI call
     reasons: list[str] = []
