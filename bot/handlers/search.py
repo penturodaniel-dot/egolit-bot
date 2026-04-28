@@ -1,8 +1,7 @@
 import asyncio
 
-import httpx
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, URLInputFile, BufferedInputFile
+from aiogram.types import Message, CallbackQuery, URLInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
@@ -19,26 +18,6 @@ router = Router()
 
 # Telegram caption limit
 CAPTION_LIMIT = 1024
-
-
-async def _fetch_image_bytes(url: str) -> bytes | None:
-    """Download image bytes via httpx (handles sites that block Telegram's fetch)."""
-    try:
-        async with httpx.AsyncClient(
-            timeout=10,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Referer": "https://gorod.dp.ua/",
-            },
-        ) as client:
-            resp = await client.get(url)
-            ct = resp.headers.get("content-type", "")
-            if resp.status_code == 200 and "image" in ct:
-                return resp.content
-    except Exception:
-        pass
-    return None
 
 
 def _card_keyboard(
@@ -170,17 +149,10 @@ async def _send_event_card(
 
     if event.photo_url:
         try:
-            # Cloudinary URLs are publicly accessible — send directly
-            # For other hosts (gorod.dp.ua) — download via httpx first
-            if "cloudinary.com" in event.photo_url:
-                photo = URLInputFile(event.photo_url)
-            else:
-                img_bytes = await _fetch_image_bytes(event.photo_url)
-                photo = BufferedInputFile(img_bytes, filename="photo.jpg") if img_bytes else URLInputFile(event.photo_url)
             caption = card_text[:CAPTION_LIMIT]
             await bot.send_photo(
                 chat_id=message.chat.id,
-                photo=photo,
+                photo=URLInputFile(event.photo_url),
                 caption=caption,
                 parse_mode="HTML",
                 reply_markup=reply_markup,
