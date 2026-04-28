@@ -40,24 +40,20 @@ BASE_PROMPT_TEXT = """\
 Проаналізуй запит користувача і поверни JSON з такими полями:
 
 intent        — "service" | "event" | "lead" | "other"
-category_names — масив рядків (категорії послуг з переліку нижче), або []
-event_category — "концерти"|"театр"|"виставки"|"кіно"|"для дітей"|"стендап"|"фестивалі"|"активний відпочинок"|"майстер-класи" або null
+category_names — масив рядків (назви категорій послуг), або []
+event_category — рядок (тип події) або null
 date_filter   — "today"|"weekend"|"week"|"month" або null
 search_text   — конкретне ім'я або ключове слово, або null. Транслітеруй рос→укр: ы→и, э→е, ё→е, ъ→""
 max_price     — максимальний бюджет числом, або null
 needs_clarification   — true або false
 clarification_question — рядок або null
 
-ДОСТУПНІ КАТЕГОРІЇ ПОСЛУГ:
-{categories}
-
 Відповідай ТІЛЬКИ валідним JSON без пояснень."""
 
 
 def _build_system_prompt(extra_instructions: str = "") -> str:
-    categories = get_categories_prompt()
-    extra = f"\nДОДАТКОВІ ІНСТРУКЦІЇ ВІД АДМІНА:\n{extra_instructions.strip()}\n" if extra_instructions.strip() else ""
-    return BASE_PROMPT_TEXT.format(categories=categories) + extra
+    extra = extra_instructions.strip() if extra_instructions.strip() else ""
+    return BASE_PROMPT_TEXT + (f"\n\n{extra}" if extra else "")
 
 
 async def parse_intent(user_text: str, history: list[dict] | None = None) -> ParsedIntent:
