@@ -19,6 +19,9 @@ router = Router()
 # Telegram caption limit
 CAPTION_LIMIT = 1024
 
+# Results per page (change here to affect both first load and "more" button)
+PAGE_SIZE = 2
+
 
 def _card_keyboard(
     url: str | None,
@@ -296,32 +299,39 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         await state.update_data(last_date_filter=date_filter, last_search_text=search_text)
 
         products, events = [], []
+        has_more = False
+        _fetch = PAGE_SIZE + 1  # fetch one extra to detect if more exist
+
         if parsed.intent == "event":
             if parsed.event_category == "кіно":
-                events = await search_kino_events(
-                    limit=5,
+                raw = await search_kino_events(
+                    limit=_fetch,
                     date_filter=date_filter,
                     search_text=search_text,
                 )
             else:
-                events = await search_karabas_events(
+                raw = await search_karabas_events(
                     category=parsed.event_category,
-                    limit=5,
+                    limit=_fetch,
                     date_filter=date_filter,
                     search_text=search_text,
                 )
+            has_more = len(raw) > PAGE_SIZE
+            events = raw[:PAGE_SIZE]
         else:
-            products = await search_products(
+            raw = await search_products(
                 category_names=parsed.category_names or None,
                 max_price=parsed.max_price,
                 search_text=search_text,
-                limit=5,
+                limit=_fetch,
                 offset=0,
             )
+            has_more = len(raw) > PAGE_SIZE
+            products = raw[:PAGE_SIZE]
 
         # Track shown IDs to prevent duplicates on "load more"
         shown_ids = [p.id for p in products] + [e.id for e in events]
-        await state.update_data(shown_ids=shown_ids)
+        await state.update_data(shown_ids=shown_ids, last_has_more=has_more)
 
         # Крок 3: AI генерує короткий вступ (1 речення)
         count = len(products) or len(events)
@@ -355,7 +365,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         except Exception:
             await thinking_msg.delete()
 
-    await _send_results(message, bot, products, events, ai_intro, has_more=bool(products or events), user_query=user_text)
+    await _send_results(message, bot, products, events, ai_intro, has_more=has_more, user_query=user_text)
 
 
 # Фіксовані кнопки видалені — тепер всі кнопки меню динамічні (dynamic_menu.py)
@@ -387,7 +397,7 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
 @router.callback_query(F.data == "more_results")
 async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMContext):
     data = await state.get_data()
-    offset = data.get("last_offset", 0) + 5
+    offset = data.get("last_offset", 0) + PAGE_SIZE
     intent = data.get("last_intent", "service")
     event_category = data.get("last_event_category")
     category_names = data.get("last_category_names", [])
@@ -398,30 +408,34 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
 
     await callback.answer("Шукаю ще...")
 
+    _fetch = PAGE_SIZE * 3  # fetch extra to compensate for duplicates
+
     if intent == "event":
         if event_category == "кіно":
-            results = await search_kino_events(
-                limit=10, offset=offset,
+            raw = await search_kino_events(
+                limit=_fetch, offset=offset,
                 date_filter=date_filter, search_text=search_text,
             )
         else:
-            results = await search_karabas_events(
-                category=event_category, limit=10, offset=offset,
+            raw = await search_karabas_events(
+                category=event_category, limit=_fetch, offset=offset,
                 date_filter=date_filter, search_text=search_text,
             )
-        # Filter already-shown items then take 5
-        results = [e for e in results if e.id not in shown_ids][:5]
+        filtered = [e for e in raw if e.id not in shown_ids]
+        has_more = len(filtered) > PAGE_SIZE
+        results = filtered[:PAGE_SIZE]
         products, events = [], results
     else:
-        # Fetch extra to compensate for possible duplicates
         raw = await search_products(
             category_names=category_names or None,
             max_price=max_price,
             search_text=search_text,
-            limit=10,
+            limit=_fetch,
             offset=offset,
         )
-        products = [p for p in raw if p.id not in shown_ids][:5]
+        filtered = [p for p in raw if p.id not in shown_ids]
+        has_more = len(filtered) > PAGE_SIZE
+        products = filtered[:PAGE_SIZE]
         events = []
 
     # Save newly shown IDs
@@ -439,12 +453,12 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     if products:
         for i, p in enumerate(products, 1):
             is_last = i == len(products)
-            more = results_keyboard(has_more=True) if is_last else None
+            more = results_keyboard(has_more=has_more) if is_last else None
             markup = _product_contact_keyboard(p, more)
             await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
     elif events:
         for i, e in enumerate(events, 1):
             is_last = i == len(events)
-            more = results_keyboard(has_more=True) if is_last else None
+            more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
             await _send_event_card(callback.message, bot, e, i, reply_markup=markup)
