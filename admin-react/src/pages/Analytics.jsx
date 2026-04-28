@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { getAnalytics, syncEvents, syncEgolist, getSyncStatus } from '../api.js';
-const seedKarabas = () => fetch('/api/seed-karabas', { method: 'POST', credentials: 'include' });
-const seedEgolist = () => fetch('/api/seed-egolist-performers', { method: 'POST', credentials: 'include' });
+import { getAnalytics } from '../api.js';
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -80,139 +78,10 @@ function formatEta(seconds) {
   return `~${m} хв`;
 }
 
-function SyncCard({ name, label, color, icon, job, onSync }) {
-  const status = job?.status || 'idle';
-  const pct = job?.progress || 0;
-  const message = job?.message || '';
-  const eta = job?.eta;
-  const stats = job?.stats;
-  const isRunning = status === 'running';
-  const isDone = status === 'done';
-  const isError = status === 'error';
-
-  const statusColor = isRunning ? color : isDone ? '#10b981' : isError ? '#dc2626' : '#94a3b8';
-  const statusText = isRunning ? 'Оновлення...' : isDone ? 'Готово' : isError ? 'Помилка' : 'Очікування';
-
-  return (
-    <div className="sync-card card" style={{ borderTop: `3px solid ${statusColor}` }}>
-      <div className="sync-card-header">
-        <div className="sync-card-title">
-          <span className="sync-card-icon">{icon}</span>
-          <span>{label}</span>
-        </div>
-        <button
-          className="btn-primary btn-sm"
-          onClick={onSync}
-          disabled={isRunning}
-          style={{ background: isRunning ? '#94a3b8' : `linear-gradient(135deg,${color},${color}cc)`, padding: '5px 12px', fontSize: 12 }}
-        >
-          {isRunning ? (
-            <>
-              <span className="spinner-xs" />
-              Оновлення...
-            </>
-          ) : 'Оновити'}
-        </button>
-      </div>
-
-      {/* Progress bar — always visible, shows 0 when idle */}
-      <div className="sync-progress-track">
-        <div
-          className="sync-progress-fill"
-          style={{
-            width: `${pct}%`,
-            background: isError
-              ? '#dc2626'
-              : isDone
-              ? '#10b981'
-              : `linear-gradient(90deg,${color},${color}bb)`,
-            transition: isRunning ? 'width 0.6s ease' : 'none',
-          }}
-        />
-      </div>
-
-      <div className="sync-card-footer">
-        <div className="sync-status-row">
-          <span className="sync-dot" style={{ background: statusColor }} />
-          <span className="sync-status-text" style={{ color: statusColor }}>{statusText}</span>
-          {isRunning && <span className="sync-pct">{pct}%</span>}
-          {isRunning && eta && <span className="sync-eta">Залишилось {formatEta(eta)}</span>}
-        </div>
-
-        {isRunning && message && (
-          <div className="sync-message">{message}</div>
-        )}
-
-        {isDone && stats && (
-          <div className="sync-stats">
-            {stats.new != null && <span>+{stats.new} нових</span>}
-            {stats.updated != null && <span>{stats.updated} оновлено</span>}
-            {stats.total_active != null && <span>{stats.total_active} активних</span>}
-          </div>
-        )}
-
-        {isError && stats?.error && (
-          <div className="sync-message sync-message-error">{stats.error}</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function SeedCard({ label, icon, color, description, onRun }) {
-  const [state, setState] = useState('idle'); // idle | running | done | error
-  const [msg, setMsg] = useState('');
-
-  const handleRun = async () => {
-    if (state === 'running') return;
-    setState('running');
-    setMsg('');
-    try {
-      const res = await onRun();
-      if (res && !res.ok) throw new Error('HTTP ' + res.status);
-      setState('done');
-      setMsg('Завдання запущено у фоні — зайдіть на сторінку через 30–60 сек.');
-    } catch (e) {
-      setState('error');
-      setMsg('Помилка: ' + e.message);
-    }
-  };
-
-  const statusColor = state === 'running' ? color : state === 'done' ? '#10b981' : state === 'error' ? '#dc2626' : '#94a3b8';
-
-  return (
-    <div className="sync-card card" style={{ borderTop: `3px solid ${statusColor}` }}>
-      <div className="sync-card-header">
-        <div className="sync-card-title">
-          <span className="sync-card-icon">{icon}</span>
-          <span>{label}</span>
-        </div>
-        <button
-          className="btn-primary btn-sm"
-          onClick={handleRun}
-          disabled={state === 'running'}
-          style={{ background: state === 'running' ? '#94a3b8' : `linear-gradient(135deg,${color},${color}cc)`, padding: '5px 12px', fontSize: 12 }}
-        >
-          {state === 'running' ? <><span className="spinner-xs" /> Запуск...</> : 'Завантажити'}
-        </button>
-      </div>
-      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 8px', lineHeight: 1.4 }}>{description}</div>
-      {msg && (
-        <div className="sync-message" style={{ color: state === 'error' ? '#dc2626' : '#10b981' }}>{msg}</div>
-      )}
-    </div>
-  );
-}
-
 export default function Analytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [syncJobs, setSyncJobs] = useState({
-    events:  { status: 'idle', progress: 0, message: '', eta: null, stats: null },
-    egolist: { status: 'idle', progress: 0, message: '', eta: null, stats: null },
-  });
-  const pollRef = useRef(null);
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -222,49 +91,6 @@ export default function Analytics() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
-
-  // Poll sync status when any job is running
-  useEffect(() => {
-    const anyRunning = Object.values(syncJobs).some(j => j.status === 'running');
-
-    if (anyRunning) {
-      pollRef.current = setInterval(async () => {
-        try {
-          const status = await getSyncStatus();
-          setSyncJobs(prev => {
-            const next = { ...prev };
-            for (const key of ['events', 'egolist']) {
-              if (status[key]) next[key] = status[key];
-            }
-            return next;
-          });
-          // If a job just finished, reload analytics to update counts
-          const justDone = Object.values(status).some(j => j.status === 'done');
-          if (justDone && !Object.values(status).some(j => j.status === 'running')) {
-            load();
-          }
-        } catch { /* ignore polling errors */ }
-      }, 1500);
-    } else {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    }
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [syncJobs, load]);
-
-  const handleSync = async (key, apiFn) => {
-    setSyncJobs(prev => ({ ...prev, [key]: { ...prev[key], status: 'running', progress: 0, message: 'Запуск...', eta: null, stats: null } }));
-    try {
-      await apiFn();
-    } catch (e) {
-      setSyncJobs(prev => ({ ...prev, [key]: { ...prev[key], status: 'error', stats: { error: e.message } } }));
-    }
-  };
 
   const users   = data?.users   || {};
   const msgs    = data?.messages || {};
@@ -282,46 +108,6 @@ export default function Analytics() {
     <div className="page-wrap">
       <Header title="Аналітика" subtitle="Statistics" />
       <div className="page-content">
-
-        {/* Sync cards */}
-        <div className="section-label">Синхронізація даних</div>
-        <div className="sync-cards-row" style={{ marginBottom: 28 }}>
-          <SyncCard
-            name="events"
-            label="Афіша Egolist"
-            color="#10b981"
-            icon="🎭"
-            job={syncJobs.events}
-            onSync={() => handleSync('events', syncEvents)}
-          />
-          <SyncCard
-            name="egolist"
-            label="Виконавці Egolist"
-            color="#0ea5e9"
-            icon="🎤"
-            job={syncJobs.egolist}
-            onSync={() => handleSync('egolist', syncEgolist)}
-          />
-        </div>
-
-        {/* Seed cards */}
-        <div className="section-label">Тестові дані (seed)</div>
-        <div className="sync-cards-row" style={{ marginBottom: 28 }}>
-          <SeedCard
-            label="Завантажити афішу з Karabas"
-            icon="🎟"
-            color="#f59e0b"
-            description="до 50 подій з dnipro.karabas.com → таблиця events"
-            onRun={seedKarabas}
-          />
-          <SeedCard
-            label="Завантажити виконавців з Egolist"
-            icon="🎤"
-            color="#8b5cf6"
-            description="до 50 виконавців з api.egolist.ua → таблиця performers"
-            onRun={seedEgolist}
-          />
-        </div>
 
         {/* Action bar */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 20 }}>

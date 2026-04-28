@@ -183,6 +183,24 @@ function PerformerRow({ item, onEdit, onDelete, onToggle }) {
   );
 }
 
+function SeedBtn({ onSeed }) {
+  const [state, setState] = useState('idle');
+  const run = async () => {
+    if (state === 'running') return;
+    setState('running');
+    try {
+      await fetch('/api/seed-egolist-performers', { method: 'POST', credentials: 'include' });
+      setState('done');
+      setTimeout(() => { setState('idle'); onSeed(); }, 2000);
+    } catch { setState('idle'); }
+  };
+  return (
+    <button className="pf-btn-seed" onClick={run} disabled={state === 'running'} title="Завантажити до 50 виконавців з api.egolist.ua">
+      {state === 'running' ? '⏳ Завантаження...' : state === 'done' ? '✅ Готово' : '🎤 Seed з Egolist'}
+    </button>
+  );
+}
+
 export default function Performers() {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -256,6 +274,7 @@ export default function Performers() {
             <option value="">Всі категорії</option>
             {usedCats.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <SeedBtn onSeed={load} />
           <button className="btn-primary" onClick={() => { setEditItem(null); setModal('add'); }}>
             + Додати виконавця
           </button>
@@ -315,6 +334,15 @@ export default function Performers() {
 
       <style>{`
         .pf-toolbar { display: flex; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+        .pf-btn-seed {
+          padding: 8px 14px;
+          background: var(--card-bg); color: var(--text-secondary);
+          border: 1px solid var(--border); border-radius: 10px;
+          font-size: 12.5px; font-weight: 600; cursor: pointer;
+          transition: all 0.15s; white-space: nowrap;
+        }
+        .pf-btn-seed:hover:not(:disabled) { background: #f3e8ff; border-color: #d8b4fe; color: #7c3aed; }
+        .pf-btn-seed:disabled { opacity: 0.65; cursor: default; }
         .pf-search {
           flex: 1; min-width: 200px;
           padding: 9px 14px; border-radius: 10px;

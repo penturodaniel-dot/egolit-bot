@@ -168,6 +168,24 @@ function EventForm({ initial, onSave, onCancel }) {
   );
 }
 
+function SeedBtn({ onSeed }) {
+  const [state, setState] = useState('idle');
+  const run = async () => {
+    if (state === 'running') return;
+    setState('running');
+    try {
+      await fetch('/api/seed-karabas', { method: 'POST', credentials: 'include' });
+      setState('done');
+      setTimeout(() => { setState('idle'); onSeed(); }, 2000);
+    } catch { setState('idle'); }
+  };
+  return (
+    <button className="ef-btn-seed" onClick={run} disabled={state === 'running'} title="Завантажити до 50 подій з dnipro.karabas.com">
+      {state === 'running' ? '⏳ Завантаження...' : state === 'done' ? '✅ Готово' : '🎟 Seed з Karabas'}
+    </button>
+  );
+}
+
 export default function Events() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -264,6 +282,7 @@ export default function Events() {
           <option value="">Всі джерела</option>
           {sources.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <SeedBtn onSeed={load} />
         <button className="ef-btn-add" onClick={() => setModal({ mode: 'add' })}>
           + Додати подію
         </button>
@@ -404,6 +423,15 @@ export default function Events() {
           background: var(--card-bg); color: var(--text-primary);
           cursor: pointer; outline: none;
         }
+        .ef-btn-seed {
+          padding: 8px 14px;
+          background: var(--card-bg); color: var(--text-secondary);
+          border: 1px solid var(--border); border-radius: var(--radius-sm);
+          font-size: 12.5px; font-weight: 600; cursor: pointer;
+          transition: all 0.15s; white-space: nowrap;
+        }
+        .ef-btn-seed:hover:not(:disabled) { background: #fef3c7; border-color: #fde68a; color: #b45309; }
+        .ef-btn-seed:disabled { opacity: 0.65; cursor: default; }
         .ef-btn-add {
           margin-left: auto; padding: 8px 16px;
           background: var(--accent); color: #fff;
