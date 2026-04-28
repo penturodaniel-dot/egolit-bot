@@ -3,6 +3,9 @@ from aiogram.fsm.state import State, StatesGroup
 
 class SearchFlow(StatesGroup):
     waiting_query = State()
+    waiting_date = State()      # clarification: pick date via calendar
+    waiting_category = State()  # clarification: pick event type
+    waiting_budget = State()    # clarification: pick budget range
 
 
 class LeadFlow(StatesGroup):

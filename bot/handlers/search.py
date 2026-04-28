@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date as _date
 
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, URLInputFile
@@ -12,7 +13,39 @@ from ai.respond import format_intro, generate_match_reasons
 from db.queries import search_products, search_karabas_events, search_kino_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard, manager_choice_keyboard
+from bot.calendar_widget import build_calendar, IGN
 from bot.states import SearchFlow
+
+
+# ── Clarification keyboards ────────────────────────────────────────────────
+
+def _event_type_keyboard() -> InlineKeyboardMarkup:
+    options = [
+        ("🎂 День народження", "scat:birthday"),
+        ("🏢 Корпоратив",      "scat:corporate"),
+        ("💑 Весілля",         "scat:wedding"),
+        ("🎉 Загальний захід", "scat:event"),
+        ("🎵 Концерт / Шоу",  "scat:concert"),
+        ("👶 Дитяче свято",   "scat:kids"),
+        ("❓ Інше",            "scat:other"),
+    ]
+    rows = [[InlineKeyboardButton(text=label, callback_data=cb)] for label, cb in options]
+    rows.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _budget_keyboard() -> InlineKeyboardMarkup:
+    options = [
+        ("до 5 000 грн",          "sbud:5000"),
+        ("5 000 – 10 000 грн",    "sbud:10000"),
+        ("10 000 – 50 000 грн",   "sbud:50000"),
+        ("50 000 – 100 000 грн",  "sbud:100000"),
+        ("100 000 – 300 000 грн", "sbud:300000"),
+        ("💬 Інше / уточнити",    "sbud:other"),
+    ]
+    rows = [[InlineKeyboardButton(text=label, callback_data=cb)] for label, cb in options]
+    rows.append([InlineKeyboardButton(text="❌ Скасувати", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 router = Router()
 
@@ -284,7 +317,25 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
         if parsed.needs_clarification and parsed.clarification_question:
             await thinking_msg.delete()
-            await message.answer(parsed.clarification_question)
+            q = parsed.clarification_question
+            if "📅" in q:
+                # Show interactive calendar
+                today = _date.today()
+                await state.set_state(SearchFlow.waiting_date)
+                await message.answer(q, parse_mode="HTML",
+                                     reply_markup=build_calendar(today.year, today.month))
+            elif "🎉" in q:
+                # Show event-type buttons
+                await state.set_state(SearchFlow.waiting_category)
+                await message.answer(q, parse_mode="HTML",
+                                     reply_markup=_event_type_keyboard())
+            elif "💰" in q:
+                # Show budget-range buttons
+                await state.set_state(SearchFlow.waiting_budget)
+                await message.answer(q, parse_mode="HTML",
+                                     reply_markup=_budget_keyboard())
+            else:
+                await message.answer(q, parse_mode="HTML")
             return
 
         if parsed.intent == "lead":
@@ -462,3 +513,94 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
             await _send_event_card(callback.message, bot, e, i, reply_markup=markup)
+
+
+# ── Clarification: DATE (calendar) ─────────────────────────────────────────
+
+@router.callback_query(F.data == IGN)
+async def clarif_calendar_ignore(callback: CallbackQuery):
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("CAL:G:"), SearchFlow.waiting_date)
+async def clarif_calendar_navigate(callback: CallbackQuery):
+    _, _, year, month = callback.data.split(":")
+    try:
+        await callback.message.edit_reply_markup(
+            reply_markup=build_calendar(int(year), int(month))
+        )
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("CAL:D:"), SearchFlow.waiting_date)
+async def clarif_calendar_day(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    _, _, year, month, day = callback.data.split(":")
+    chosen = _date(int(year), int(month), int(day))
+    date_str = chosen.strftime("%d.%m.%Y")
+    await callback.answer(f"✅ {date_str}")
+    try:
+        await callback.message.edit_text(f"📅 Дата: <b>{date_str}</b>", parse_mode="HTML")
+    except Exception:
+        pass
+    data = await state.get_data()
+    query = data.get("last_query", "")
+    await state.clear()
+    await _do_search(callback.message, bot, state, f"{query}, дата {date_str}")
+
+
+# ── Clarification: EVENT TYPE ───────────────────────────────────────────────
+
+_SCAT_LABELS = {
+    "birthday":  "День народження",
+    "corporate": "Корпоратив",
+    "wedding":   "Весілля",
+    "event":     "Загальний захід",
+    "concert":   "Концерт / Шоу",
+    "kids":      "Дитяче свято",
+    "other":     "Інший захід",
+}
+
+@router.callback_query(F.data.startswith("scat:"), SearchFlow.waiting_category)
+async def clarif_category_chosen(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    cat_code = callback.data.split(":", 1)[1]
+    label = _SCAT_LABELS.get(cat_code, cat_code)
+    await callback.answer(f"✅ {label}")
+    try:
+        await callback.message.edit_text(f"🎉 Тип заходу: <b>{label}</b>", parse_mode="HTML")
+    except Exception:
+        pass
+    data = await state.get_data()
+    query = data.get("last_query", "")
+    await state.clear()
+    await _do_search(callback.message, bot, state, f"{label}: {query}")
+
+
+# ── Clarification: BUDGET ───────────────────────────────────────────────────
+
+_BUDGET_LABELS = {
+    "5000":   "до 5 000 грн",
+    "10000":  "5 000 – 10 000 грн",
+    "50000":  "10 000 – 50 000 грн",
+    "100000": "50 000 – 100 000 грн",
+    "300000": "100 000 – 300 000 грн",
+    "other":  "бюджет уточнимо",
+}
+
+@router.callback_query(F.data.startswith("sbud:"), SearchFlow.waiting_budget)
+async def clarif_budget_chosen(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    bud_code = callback.data.split(":", 1)[1]
+    label = _BUDGET_LABELS.get(bud_code, bud_code)
+    max_price = int(bud_code) if bud_code.isdigit() else None
+    await callback.answer(f"✅ {label}")
+    try:
+        await callback.message.edit_text(f"💰 Бюджет: <b>{label}</b>", parse_mode="HTML")
+    except Exception:
+        pass
+    data = await state.get_data()
+    query = data.get("last_query", "")
+    if max_price:
+        await state.update_data(last_max_price=max_price)
+    await state.clear()
+    await _do_search(callback.message, bot, state, f"{query}, бюджет {label}")
