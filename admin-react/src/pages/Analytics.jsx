@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAnalytics, syncEvents, syncEgolist, getSyncStatus } from '../api.js';
+const seedKarabas = () => fetch('/api/seed-karabas', { method: 'POST', credentials: 'include' });
+const seedEgolist = () => fetch('/api/seed-egolist-performers', { method: 'POST', credentials: 'include' });
 import Header from '../components/Header.jsx';
 
 function drawBarChart(canvas, labels, values, color = '#ff6b35') {
@@ -157,6 +159,51 @@ function SyncCard({ name, label, color, icon, job, onSync }) {
   );
 }
 
+function SeedCard({ label, icon, color, description, onRun }) {
+  const [state, setState] = useState('idle'); // idle | running | done | error
+  const [msg, setMsg] = useState('');
+
+  const handleRun = async () => {
+    if (state === 'running') return;
+    setState('running');
+    setMsg('');
+    try {
+      const res = await onRun();
+      if (res && !res.ok) throw new Error('HTTP ' + res.status);
+      setState('done');
+      setMsg('Завдання запущено у фоні — зайдіть на сторінку через 30–60 сек.');
+    } catch (e) {
+      setState('error');
+      setMsg('Помилка: ' + e.message);
+    }
+  };
+
+  const statusColor = state === 'running' ? color : state === 'done' ? '#10b981' : state === 'error' ? '#dc2626' : '#94a3b8';
+
+  return (
+    <div className="sync-card card" style={{ borderTop: `3px solid ${statusColor}` }}>
+      <div className="sync-card-header">
+        <div className="sync-card-title">
+          <span className="sync-card-icon">{icon}</span>
+          <span>{label}</span>
+        </div>
+        <button
+          className="btn-primary btn-sm"
+          onClick={handleRun}
+          disabled={state === 'running'}
+          style={{ background: state === 'running' ? '#94a3b8' : `linear-gradient(135deg,${color},${color}cc)`, padding: '5px 12px', fontSize: 12 }}
+        >
+          {state === 'running' ? <><span className="spinner-xs" /> Запуск...</> : 'Завантажити'}
+        </button>
+      </div>
+      <div style={{ fontSize: 11.5, color: 'var(--text-muted)', margin: '6px 0 8px', lineHeight: 1.4 }}>{description}</div>
+      {msg && (
+        <div className="sync-message" style={{ color: state === 'error' ? '#dc2626' : '#10b981' }}>{msg}</div>
+      )}
+    </div>
+  );
+}
+
 export default function Analytics() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -254,6 +301,25 @@ export default function Analytics() {
             icon="🎤"
             job={syncJobs.egolist}
             onSync={() => handleSync('egolist', syncEgolist)}
+          />
+        </div>
+
+        {/* Seed cards */}
+        <div className="section-label">Тестові дані (seed)</div>
+        <div className="sync-cards-row" style={{ marginBottom: 28 }}>
+          <SeedCard
+            label="Завантажити афішу з Karabas"
+            icon="🎟"
+            color="#f59e0b"
+            description="до 50 подій з dnipro.karabas.com → таблиця events"
+            onRun={seedKarabas}
+          />
+          <SeedCard
+            label="Завантажити виконавців з Egolist"
+            icon="🎤"
+            color="#8b5cf6"
+            description="до 50 виконавців з api.egolist.ua → таблиця performers"
+            onRun={seedEgolist}
           />
         </div>
 

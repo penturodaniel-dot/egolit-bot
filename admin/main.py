@@ -40,6 +40,7 @@ from db.chat import (
 )
 from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
 from scrapers.egolist_events import scrape_all as events_scrape_all, init_egolist_events
+from scrapers.seed import seed_karabas_events, seed_egolist_performers
 from db.performers import (
     init_performers_table,
     get_all_performers, get_performer, create_performer, update_performer,
@@ -668,6 +669,40 @@ async def api_sync_egolist(request: Request, background_tasks: BackgroundTasks):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_egolist_bg)
     return JSONResponse({"ok": True, "status": "started"})
+
+
+@app.post("/api/seed-karabas")
+async def api_seed_karabas(request: Request, background_tasks: BackgroundTasks):
+    """Seed up to 50 events from Karabas Dnipro → unified events table."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    background_tasks.add_task(_run_seed_karabas_bg)
+    return JSONResponse({"ok": True, "status": "started"})
+
+
+async def _run_seed_karabas_bg():
+    try:
+        result = await seed_karabas_events(limit=50)
+        _sched_logger.info("Karabas seed done: %s", result)
+    except Exception:
+        _sched_logger.exception("Karabas seed failed")
+
+
+@app.post("/api/seed-egolist-performers")
+async def api_seed_egolist_performers(request: Request, background_tasks: BackgroundTasks):
+    """Seed up to 50 performers from Egolist API → performers table."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    background_tasks.add_task(_run_seed_egolist_bg)
+    return JSONResponse({"ok": True, "status": "started"})
+
+
+async def _run_seed_egolist_bg():
+    try:
+        result = await seed_egolist_performers(limit=50)
+        _sched_logger.info("Egolist performers seed done: %s", result)
+    except Exception:
+        _sched_logger.exception("Egolist performers seed failed")
 
 
 @app.post("/sync-events")
