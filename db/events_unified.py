@@ -215,6 +215,55 @@ async def toggle_event_featured(event_id: int) -> bool:
     return bool(new_val)
 
 
+async def search_crm_events(
+    search_text: str | None = None,
+    category: str | None = None,
+    date_filter: str | None = None,
+    limit: int = 5,
+    offset: int = 0,
+) -> list[dict]:
+    """Search all published events from unified events table (all sources:
+    manual, karabas, egolist, kontramarka…). Used by bot search."""
+    pool = await get_pool()
+    where = ["is_published = TRUE"]
+    params: list = []
+
+    if date_filter == "today":
+        where.append("date = CURRENT_DATE")
+    elif date_filter == "weekend":
+        where.append(
+            "date >= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '5 days' "
+            "AND date <= DATE_TRUNC('week', CURRENT_DATE) + INTERVAL '6 days'"
+        )
+    elif date_filter == "week":
+        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '7 days'")
+    elif date_filter == "month":
+        where.append("date >= CURRENT_DATE AND date <= CURRENT_DATE + INTERVAL '30 days'")
+    else:
+        where.append("(date IS NULL OR date >= CURRENT_DATE)")
+
+    if search_text:
+        where.append(f"(title ILIKE ${len(params)+1} OR COALESCE(description,'') ILIKE ${len(params)+1})")
+        params.append(f"%{search_text}%")
+
+    if category:
+        where.append(f"category ILIKE ${len(params)+1}")
+        params.append(f"%{category}%")
+
+    params += [limit, offset]
+    where_sql = " AND ".join(where)
+
+    try:
+        rows = await pool.fetch(f"""
+            SELECT * FROM events WHERE {where_sql}
+            ORDER BY is_featured DESC, priority DESC, date ASC NULLS LAST
+            LIMIT ${len(params)-1} OFFSET ${len(params)}
+        """, *params)
+        return [dict(r) for r in rows]
+    except Exception:
+        return []
+
+
 async def search_manual_events(
     search_text: str | None = None,
     category: str | None = None,

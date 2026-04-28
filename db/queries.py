@@ -3,9 +3,8 @@ from dataclasses import dataclass
 from typing import Optional
 from db.connection import get_pool
 from config import settings
-from db.content import search_bot_places, search_bot_events_active
 from db.performers import search_performers
-from db.events_unified import search_manual_events
+from db.events_unified import search_crm_events
 
 logger = logging.getLogger(__name__)
 
@@ -79,36 +78,22 @@ async def search_products(
     limit: int = 5,
     offset: int = 0,
 ) -> list[ProductResult]:
-    """Search performers/venues from local egolist_products table (synced from API).
-    Falls back to empty list if table not yet populated.
-    """
-    pool = await get_pool()
-
-    # Check table exists and has data
-    try:
-        exists = await pool.fetchval(
-            "SELECT 1 FROM information_schema.tables WHERE table_name='egolist_products'"
-        )
-        if not exists:
-            return []
-    except Exception:
-        return []
+    """Search performers/venues exclusively from CRM performers table."""
 
     # Safety net: if no category AND no search_text → don't return everything.
     if not category_names and not search_text:
         return []
 
-    # ── 1. Performers (CRM-managed, priority source) ──────────────────────────
-    performer_rows = await search_performers(
+    rows = await search_performers(
         category_names=category_names,
         search_text=search_text,
         max_price=max_price,
         limit=limit,
         offset=offset,
     )
-    crm_results: list[ProductResult] = []
-    for r in performer_rows:
-        crm_results.append(ProductResult(
+
+    return [
+        ProductResult(
             id=r["id"],
             name=r["name"],
             description=(r.get("description") or "")[:300],
@@ -122,124 +107,9 @@ async def search_products(
             photo_url=r.get("photo_url"),
             is_top=bool(r.get("is_featured")),
             product_url=r.get("website"),
-        ))
-
-    # If CRM has enough results — return them (skip egolist_products fallback)
-    if len(crm_results) >= limit:
-        return crm_results[:limit]
-
-    # ── 2. Egolist products (legacy API-synced fallback) ──────────────────────
-    params: list = []
-    where = ["is_active = TRUE"]
-
-    # Filter by category names
-    if category_names:
-        base = len(params)
-        cat_conds = " OR ".join(
-            f"category_name ILIKE ${base + i + 1}" for i in range(len(category_names))
-        )
-        params.extend(f"%{n}%" for n in category_names)
-        where.append(f"({cat_conds})")
-
-    if max_price:
-        params.append(max_price)
-        where.append(f"(price IS NULL OR price <= ${len(params)})")
-
-    order_by = "is_top DESC, scraped_at DESC"
-
-    if search_text:
-        trgm = await _ensure_trgm()
-        words = [w for w in search_text.split() if len(w) >= 3] or [search_text]
-        base = len(params)
-        word_conds = " OR ".join(
-            f"(name ILIKE ${base + i + 1} OR COALESCE(description,'') ILIKE ${base + i + 1})"
-            for i in range(len(words))
-        )
-        params.extend(f"%{w}%" for w in words)
-
-        if trgm:
-            trgm_idx = len(params) + 1
-            where.append(f"({word_conds} OR similarity(name, ${trgm_idx}) > 0.2)")
-            params.append(search_text)
-            order_by = f"similarity(name, ${trgm_idx}) DESC, is_top DESC"
-        else:
-            where.append(f"({word_conds})")
-
-    where_sql = " AND ".join(where)
-    limit_idx = len(params) + 1
-    offset_idx = len(params) + 2
-    params += [limit, offset]
-
-    try:
-        rows = await pool.fetch(f"""
-            SELECT api_id, name, description, category_name, city,
-                   price, phone, instagram, telegram, website,
-                   photo_url, product_url, is_top
-            FROM egolist_products
-            WHERE {where_sql}
-            ORDER BY {order_by}
-            LIMIT ${limit_idx} OFFSET ${offset_idx}
-        """, *params)
-    except Exception:
-        rows = []
-
-    results: list[ProductResult] = [
-        ProductResult(
-            id=abs(hash(r["api_id"])) % 2_000_000_000,
-            name=r["name"],
-            description=(r["description"] or "")[:300],
-            category=r["category_name"] or "",
-            city=r["city"] or "Дніпро",
-            price=r["price"],
-            phone=r["phone"],
-            instagram=r["instagram"],
-            website=r["website"],
-            telegram_contact=r["telegram"],
-            photo_url=r["photo_url"],
-            is_top=bool(r["is_top"]),
-            product_url=r["product_url"],
         )
         for r in rows
     ]
-
-    # ── Bot-managed places (featured shown first) ─────────────────────────
-    try:
-        bot_rows = await search_bot_places(
-            search_text=search_text,
-            max_price=max_price,
-            limit=limit,
-            offset=offset,
-        )
-        for r in bot_rows:
-            p = ProductResult(
-                id=-(r["id"]),
-                name=r["name"],
-                description=(r.get("description") or "")[:300],
-                category=r.get("category") or "",
-                city=r.get("city") or "Дніпро",
-                price=r.get("price_from"),
-                phone=r.get("phone"),
-                instagram=r.get("instagram"),
-                website=r.get("website") or r.get("booking_url"),
-                telegram_contact=r.get("telegram"),
-                photo_url=r.get("photo_url"),
-                is_top=bool(r.get("is_featured")),
-                product_url=r.get("booking_url"),
-            )
-            if r.get("is_featured"):
-                results.insert(0, p)
-            else:
-                results.append(p)
-    except Exception:
-        pass
-
-    # Merge: CRM performers first, then egolist fallback, deduplicated by name
-    crm_names = {r.name.lower() for r in crm_results}
-    for r in results:
-        if r.name.lower() not in crm_names:
-            crm_results.append(r)
-
-    return crm_results[:limit]
 
 
 # ── Egolist events (replaces karabas_events + kino_events) ───────────────────
@@ -379,9 +249,9 @@ async def search_karabas_events(
         fallback_search=fallback,
     )
 
-    # Prepend CRM manual events (unified events table, source='manual')
+    # Prepend CRM events (unified events table — all sources: manual, karabas, egolist…)
     try:
-        manual_evs = await search_manual_events(
+        manual_evs = await search_crm_events(
             search_text=search_text,
             category=category,
             date_filter=date_filter,
