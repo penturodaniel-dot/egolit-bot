@@ -158,3 +158,40 @@ export const syncEgolist = () =>
 // Sync job status (progress tracking)
 export const getSyncStatus = () =>
   request('GET', '/sync-status');
+
+// ── Performers (CRM) ──────────────────────────────────────────────────────────
+
+export const getPerformers = () =>
+  request('GET', '/performers');
+
+export const getPerformerCategories = () =>
+  request('GET', '/performers/categories');
+
+export const createPerformer = (data) =>
+  request('POST', '/performers', data);
+
+export const updatePerformer = (id, data) =>
+  request('PUT', `/performers/${id}`, data);
+
+export const deletePerformer = (id) =>
+  request('DELETE', `/performers/${id}`);
+
+export const togglePerformer = (id) =>
+  request('POST', `/performers/${id}/toggle`);
+
+// ── Unified Events / Афіша (CRM manual) ──────────────────────────────────────
+
+export const getAllEvents = () =>
+  request('GET', '/events');
+
+export const createUnifiedEvent = (data) =>
+  request('POST', '/events', data);
+
+export const updateUnifiedEvent = (id, data) =>
+  request('PUT', `/events/${id}`, data);
+
+export const deleteUnifiedEvent = (id) =>
+  request('DELETE', `/events/${id}`);
+
+export const toggleUnifiedEvent = (id) =>
+  request('POST', `/events/${id}/toggle`);

@@ -10,6 +10,8 @@ import Content from './pages/Content.jsx';
 import Prompt from './pages/Prompt.jsx';
 import Settings from './pages/Settings.jsx';
 import Buttons from './pages/Buttons.jsx';
+import Performers from './pages/Performers.jsx';
+import Events from './pages/Events.jsx';
 
 // Auth context
 const AuthContext = createContext(null);
@@ -141,6 +143,27 @@ export default function App() {
             <RequireAuth>
               <Layout>
                 <Settings />
+              </Layout>
+            </RequireAuth>
+          }
+        />
+
+        <Route
+          path="/performers"
+          element={
+            <RequireAuth>
+              <Layout>
+                <Performers />
+              </Layout>
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/events"
+          element={
+            <RequireAuth>
+              <Layout>
+                <Events />
               </Layout>
             </RequireAuth>
           }

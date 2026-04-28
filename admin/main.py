@@ -40,6 +40,16 @@ from db.chat import (
 )
 from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
 from scrapers.egolist_events import scrape_all as events_scrape_all, init_egolist_events
+from db.performers import (
+    init_performers_table,
+    get_all_performers, get_performer, create_performer, update_performer,
+    delete_performer, toggle_performer_published, ALL_CATEGORIES,
+)
+from db.events_unified import (
+    init_events_table,
+    get_all_events, get_event, create_event, update_event,
+    delete_event, toggle_event_published,
+)
 from db.menu_buttons import (
     load_all_buttons, get_button,
     create_button, update_button, toggle_button, delete_button,
@@ -423,6 +433,8 @@ async def on_startup():
     await init_content_tables()
     await init_egolist_events()
     await init_egolist_products()
+    await init_performers_table()
+    await init_events_table()
     asyncio.create_task(_nightly_events_loop())
     asyncio.create_task(_nightly_egolist_loop())
     # Ensure bot_leads table exists + all columns (safe migration)
@@ -1327,6 +1339,176 @@ async def api_toggle_event(request: Request, event_id: int):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     await toggle_bot_event_published(event_id)
     return JSONResponse({"ok": True})
+
+
+# ── Performers API ────────────────────────────────────────────────────────
+
+@app.get("/api/performers")
+async def api_get_performers(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    rows = await get_all_performers()
+    return JSONResponse([_serialize_record(r) for r in rows])
+
+
+@app.get("/api/performers/categories")
+async def api_performer_categories(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse(ALL_CATEGORIES)
+
+
+@app.post("/api/performers")
+async def api_create_performer(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    if not (body.get("name") or "").strip():
+        return JSONResponse({"error": "name required"}, status_code=400)
+    row = await create_performer({
+        "name": body.get("name", "").strip(),
+        "category": body.get("category", "").strip(),
+        "description": body.get("description", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "price_from": body.get("price_from") or None,
+        "price_to": body.get("price_to") or None,
+        "phone": body.get("phone", "").strip(),
+        "instagram": body.get("instagram", "").strip(),
+        "telegram": body.get("telegram", "").strip(),
+        "website": body.get("website", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "experience": body.get("experience", "").strip(),
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": body.get("priority", 0),
+    })
+    return JSONResponse(_serialize_record(row))
+
+
+@app.put("/api/performers/{performer_id}")
+async def api_update_performer(request: Request, performer_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    row = await update_performer(performer_id, {
+        "name": body.get("name", "").strip(),
+        "category": body.get("category", "").strip(),
+        "description": body.get("description", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "price_from": body.get("price_from") or None,
+        "price_to": body.get("price_to") or None,
+        "phone": body.get("phone", "").strip(),
+        "instagram": body.get("instagram", "").strip(),
+        "telegram": body.get("telegram", "").strip(),
+        "website": body.get("website", "").strip(),
+        "photo_url": body.get("photo_url", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "experience": body.get("experience", "").strip(),
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": body.get("priority", 0),
+    })
+    return JSONResponse(_serialize_record(row))
+
+
+@app.delete("/api/performers/{performer_id}")
+async def api_delete_performer(request: Request, performer_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_performer(performer_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/performers/{performer_id}/toggle")
+async def api_toggle_performer(request: Request, performer_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    new_val = await toggle_performer_published(performer_id)
+    return JSONResponse({"ok": True, "is_published": new_val})
+
+
+# ── Unified Events API ────────────────────────────────────────────────────
+
+@app.get("/api/events")
+async def api_get_all_events(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    rows = await get_all_events()
+    return JSONResponse([_serialize_record(r) for r in rows])
+
+
+@app.post("/api/events")
+async def api_create_unified_event(request: Request):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    if not (body.get("title") or "").strip():
+        return JSONResponse({"error": "title required"}, status_code=400)
+    row = await create_event({
+        "source": "manual",
+        "title": body.get("title", "").strip(),
+        "description": body.get("description", "").strip(),
+        "category": body.get("category", "").strip(),
+        "date": body.get("date") or None,
+        "time": body.get("time") or None,
+        "price": body.get("price", "").strip(),
+        "venue_name": body.get("venue_name", "").strip(),
+        "venue_address": body.get("venue_address", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "image_url": body.get("image_url", "").strip(),
+        "source_url": body.get("source_url", "").strip(),
+        "ticket_url": body.get("ticket_url", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "internal_notes": body.get("internal_notes", "").strip(),
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": body.get("priority", 0),
+    })
+    return JSONResponse(_serialize_record(row))
+
+
+@app.put("/api/events/{event_id}")
+async def api_update_unified_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    body = await request.json()
+    row = await update_event(event_id, {
+        "title": body.get("title", "").strip(),
+        "description": body.get("description", "").strip(),
+        "category": body.get("category", "").strip(),
+        "date": body.get("date") or None,
+        "time": body.get("time") or None,
+        "price": body.get("price", "").strip(),
+        "venue_name": body.get("venue_name", "").strip(),
+        "venue_address": body.get("venue_address", "").strip(),
+        "city": body.get("city", "Дніпро").strip() or "Дніпро",
+        "image_url": body.get("image_url", "").strip(),
+        "source_url": body.get("source_url", "").strip(),
+        "ticket_url": body.get("ticket_url", "").strip(),
+        "tags": body.get("tags", "").strip(),
+        "internal_notes": body.get("internal_notes", "").strip(),
+        "is_published": bool(body.get("is_published", True)),
+        "is_featured": bool(body.get("is_featured", False)),
+        "priority": body.get("priority", 0),
+    })
+    return JSONResponse(_serialize_record(row))
+
+
+@app.delete("/api/events/{event_id}")
+async def api_delete_unified_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    await delete_event(event_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/events/{event_id}/toggle")
+async def api_toggle_unified_event(request: Request, event_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    new_val = await toggle_event_published(event_id)
+    return JSONResponse({"ok": True, "is_published": new_val})
 
 
 # ── Places ────────────────────────────────────────────────────────────────

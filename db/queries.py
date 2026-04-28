@@ -4,6 +4,8 @@ from typing import Optional
 from db.connection import get_pool
 from config import settings
 from db.content import search_bot_places, search_bot_events_active
+from db.performers import search_performers
+from db.events_unified import search_manual_events
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +95,40 @@ async def search_products(
         return []
 
     # Safety net: if no category AND no search_text → don't return everything.
-    # This prevents the "random photographers" fallback when AI can't classify
-    # the query (e.g. off-topic requests like "кальян" or "доставка").
     if not category_names and not search_text:
         return []
 
+    # ── 1. Performers (CRM-managed, priority source) ──────────────────────────
+    performer_rows = await search_performers(
+        category_names=category_names,
+        search_text=search_text,
+        max_price=max_price,
+        limit=limit,
+        offset=offset,
+    )
+    crm_results: list[ProductResult] = []
+    for r in performer_rows:
+        crm_results.append(ProductResult(
+            id=r["id"],
+            name=r["name"],
+            description=(r.get("description") or "")[:300],
+            category=r.get("category") or "",
+            city=r.get("city") or "Дніпро",
+            price=r.get("price_from"),
+            phone=r.get("phone"),
+            instagram=r.get("instagram"),
+            website=r.get("website"),
+            telegram_contact=r.get("telegram"),
+            photo_url=r.get("photo_url"),
+            is_top=bool(r.get("is_featured")),
+            product_url=r.get("website"),
+        ))
+
+    # If CRM has enough results — return them (skip egolist_products fallback)
+    if len(crm_results) >= limit:
+        return crm_results[:limit]
+
+    # ── 2. Egolist products (legacy API-synced fallback) ──────────────────────
     params: list = []
     where = ["is_active = TRUE"]
 
@@ -202,7 +233,13 @@ async def search_products(
     except Exception:
         pass
 
-    return results[:limit]
+    # Merge: CRM performers first, then egolist fallback, deduplicated by name
+    crm_names = {r.name.lower() for r in crm_results}
+    for r in results:
+        if r.name.lower() not in crm_names:
+            crm_results.append(r)
+
+    return crm_results[:limit]
 
 
 # ── Egolist events (replaces karabas_events + kino_events) ───────────────────
@@ -342,16 +379,16 @@ async def search_karabas_events(
         fallback_search=fallback,
     )
 
-    # Prepend bot-managed featured events
+    # Prepend CRM manual events (unified events table, source='manual')
     try:
-        bot_evs = await search_bot_events_active(
+        manual_evs = await search_manual_events(
             search_text=search_text,
             category=category,
             date_filter=date_filter,
             limit=limit,
             offset=offset,
         )
-        for e in bot_evs:
+        for e in manual_evs:
             date_str = str(e["date"]) if e.get("date") else ""
             time_str = str(e["time"]) if e.get("time") else None
             ev = EventResult(
@@ -361,11 +398,11 @@ async def search_karabas_events(
                 date=date_str,
                 time=time_str,
                 price=e.get("price"),
-                place_name=e.get("place_name"),
-                place_address=e.get("place_address") or "Дніпро",
+                place_name=e.get("venue_name"),
+                place_address=e.get("venue_address") or "Дніпро",
                 city=e.get("city") or "Дніпро",
-                photo_url=e.get("photo_url"),
-                source_url=e.get("ticket_url"),
+                photo_url=e.get("image_url"),
+                source_url=e.get("ticket_url") or e.get("source_url"),
             )
             if e.get("is_featured"):
                 results.insert(0, ev)
