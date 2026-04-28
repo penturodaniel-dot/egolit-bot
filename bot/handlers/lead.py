@@ -1,6 +1,9 @@
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from datetime import date as _date
+
+from bot.calendar_widget import build_calendar, IGN
 
 import logging
 import httpx
@@ -276,19 +279,51 @@ async def lead_skip_budget(callback: CallbackQuery, state: FSMContext):
 
 async def _ask_date(message: Message, state: FSMContext):
     await state.set_state(LeadFlow.waiting_date)
+    today = _date.today()
     await message.answer(
-        "📅 Яка бажана дата або період?\n"
-        "<i>Наприклад: 15 травня, наступні вихідні, червень</i>",
-        reply_markup=_skip_keyboard(),
+        "📅 Оберіть бажану дату:\n"
+        "<i>🟢 — сьогодні та майбутні дні  · — минулі (недоступні)</i>",
+        parse_mode="HTML",
+        reply_markup=build_calendar(today.year, today.month),
     )
 
 
 # ── Step 5: Date ───────────────────────────────────────────────────────────
 
-@router.message(LeadFlow.waiting_date)
-async def lead_got_date(message: Message, state: FSMContext):
-    await state.update_data(lead_date=message.text.strip())
-    await _ask_people(message, state)
+@router.callback_query(F.data == IGN)
+async def calendar_ignore(callback: CallbackQuery):
+    """Mute taps on past days, headers and empty cells."""
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("CAL:G:"), LeadFlow.waiting_date)
+async def calendar_navigate(callback: CallbackQuery):
+    """Switch to a different month."""
+    _, _, year, month = callback.data.split(":")
+    kb = build_calendar(int(year), int(month))
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("CAL:D:"), LeadFlow.waiting_date)
+async def calendar_day_selected(callback: CallbackQuery, state: FSMContext):
+    """User picked a date."""
+    _, _, year, month, day = callback.data.split(":")
+    chosen = _date(int(year), int(month), int(day))
+    date_str = chosen.strftime("%d.%m.%Y")
+    await state.update_data(lead_date=date_str)
+    await callback.answer(f"✅ {date_str}", show_alert=False)
+    try:
+        await callback.message.edit_text(
+            f"📅 Дата: <b>{date_str}</b>",
+            parse_mode="HTML",
+        )
+    except Exception:
+        pass
+    await _ask_people(callback.message, state)
 
 
 @router.callback_query(F.data == "lead_skip", LeadFlow.waiting_date)
