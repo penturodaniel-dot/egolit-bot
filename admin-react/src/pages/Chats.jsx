@@ -4,6 +4,7 @@ import {
   getSessions, getMessages, sendMessage,
   setSessionStatus, setSessionTag, markSessionRead, deleteSession,
   getQuickReplies, createQuickReply, deleteQuickReply,
+  getManagerStatus,
 } from '../api.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -132,7 +133,7 @@ function SessionItem({ session, active, onClick }) {
 
 // ─── Chat Header ──────────────────────────────────────────────────────────────
 
-function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose, onDelete }) {
+function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose, onDelete, managerOnline }) {
   if (!session) return null;
   const color = avatarColor(session.id);
   const name = session.first_name
@@ -160,8 +161,12 @@ function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose, 
       </div>
       <div className="chat-actions">
         {!isHuman && session.status !== 'closed' && (
-          <button className="btn-take-over" onClick={onTakeOver} title="Підключитись до чату">
-            Підключитись
+          <button
+            className={`btn-take-over${!managerOnline ? ' btn-take-over-offline' : ''}`}
+            onClick={onTakeOver}
+            title={managerOnline ? 'Підключитись до чату' : 'Увімкніть Онлайн щоб підключитись'}
+          >
+            {managerOnline ? 'Підключитись' : '🔴 Підключитись'}
           </button>
         )}
         {isHuman && (
@@ -384,6 +389,13 @@ export default function Chats() {
 
   // UI state
   const [showInfo, setShowInfo] = useState(true);
+  const [managerOnline, setManagerOnline] = useState(false);
+  const [toast, setToast] = useState(null); // { msg, type: 'warn'|'success' }
+
+  const showToast = (msg, type = 'warn') => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  };
 
   // Refs
   const messagesEndRef = useRef(null);
@@ -417,6 +429,12 @@ export default function Chats() {
   useEffect(() => {
     loadSessions();
     loadQuickReplies();
+    // Load manager online status
+    getManagerStatus().then((d) => setManagerOnline(!!d.online)).catch(() => {});
+    const msInterval = setInterval(() => {
+      getManagerStatus().then((d) => setManagerOnline(!!d.online)).catch(() => {});
+    }, 15000);
+    return () => clearInterval(msInterval);
   }, []);
 
   // Filter sessions
@@ -566,19 +584,40 @@ export default function Chats() {
   // Session actions
   const handleTakeOver = async () => {
     if (!activeSession) return;
+    if (!managerOnline) {
+      showToast('🔴 Увімкніть статус Онлайн щоб підключитись до чату', 'warn');
+      return;
+    }
     try {
       await setSessionStatus(activeSession.id, 'human');
       setActiveSession((prev) => ({ ...prev, status: 'human' }));
       setSessions((prev) => prev.map((s) => s.id === activeSession.id ? { ...s, status: 'human' } : s));
+      // Notify client
+      await sendMessage(activeSession.id, '🧑‍💼 До чату підключився менеджер. Тепер ви спілкуєтесь з живою людиною.');
+      // Refresh messages
+      const newMsgs = await getMessages(activeSession.id, lastMsgId);
+      if (newMsgs.length > 0) {
+        setMessages((prev) => [...prev, ...newMsgs]);
+        setLastMsgId((prev) => Math.max(prev, Math.max(...newMsgs.map((m) => m.id))));
+      }
+      showToast('✅ Ви підключились до чату', 'success');
     } catch {}
   };
 
   const handleReturnToAI = async () => {
     if (!activeSession) return;
     try {
+      // Notify client BEFORE switching to AI (so bot doesn't process it)
+      await sendMessage(activeSession.id, '🤖 Менеджер відключився від чату. AI-асистент знову активний.');
       await setSessionStatus(activeSession.id, 'ai');
       setActiveSession((prev) => ({ ...prev, status: 'ai' }));
       setSessions((prev) => prev.map((s) => s.id === activeSession.id ? { ...s, status: 'ai' } : s));
+      // Refresh messages
+      const newMsgs = await getMessages(activeSession.id, lastMsgId);
+      if (newMsgs.length > 0) {
+        setMessages((prev) => [...prev, ...newMsgs]);
+        setLastMsgId((prev) => Math.max(prev, Math.max(...newMsgs.map((m) => m.id))));
+      }
     } catch {}
   };
 
@@ -726,6 +765,7 @@ export default function Chats() {
                 onReturnToAI={handleReturnToAI}
                 onClose={handleCloseSession}
                 onDelete={handleDeleteSession}
+                managerOnline={managerOnline}
               />
 
               {/* Messages */}
@@ -749,45 +789,57 @@ export default function Chats() {
 
               {/* Input area */}
               <div className="input-area">
-                {quickReplies.length > 0 && (
-                  <div className="quick-replies">
-                    {quickReplies.slice(0, 4).map((qr) => (
-                      <button
-                        key={qr.id}
-                        className="qr-btn"
-                        onClick={() => {
-                          setInputText(qr.content);
-                          textareaRef.current?.focus();
-                        }}
-                      >
-                        {qr.title}
-                      </button>
-                    ))}
+                {activeSession.status === 'ai' ? (
+                  <div className="ai-lock-notice">
+                    <span>🤖 AI веде цей чат</span>
+                    <span className="ai-lock-sub">Натисніть «Підключитись» щоб писати клієнту</span>
                   </div>
+                ) : activeSession.status === 'closed' ? (
+                  <div className="ai-lock-notice closed-notice">
+                    <span>🔒 Чат закрито</span>
+                  </div>
+                ) : (
+                  <>
+                    {quickReplies.length > 0 && (
+                      <div className="quick-replies">
+                        {quickReplies.slice(0, 4).map((qr) => (
+                          <button
+                            key={qr.id}
+                            className="qr-btn"
+                            onClick={() => {
+                              setInputText(qr.content);
+                              textareaRef.current?.focus();
+                            }}
+                          >
+                            {qr.title}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <div className="input-row">
+                      <textarea
+                        ref={textareaRef}
+                        className="msg-input"
+                        placeholder="Написати повідомлення... (Enter — надіслати, Shift+Enter — новий рядок)"
+                        value={inputText}
+                        onChange={handleInputChange}
+                        onKeyDown={handleKeyDown}
+                        rows={1}
+                      />
+                      <button
+                        className="send-btn"
+                        onClick={handleSend}
+                        disabled={!inputText.trim() || sending}
+                        title="Надіслати"
+                      >
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
+                          <line x1="22" y1="2" x2="11" y2="13" />
+                          <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </>
                 )}
-                <div className="input-row">
-                  <textarea
-                    ref={textareaRef}
-                    className="msg-input"
-                    placeholder="Написати повідомлення... (Enter — надіслати, Shift+Enter — новий рядок)"
-                    value={inputText}
-                    onChange={handleInputChange}
-                    onKeyDown={handleKeyDown}
-                    rows={1}
-                    disabled={activeSession.status === 'closed'}
-                  />
-                  <button
-                    className="send-btn"
-                    onClick={handleSend}
-                    disabled={!inputText.trim() || sending || activeSession.status === 'closed'}
-                    title="Надіслати"
-                  >
-                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5">
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
-                  </button>
-                </div>
               </div>
             </>
           )}
@@ -804,6 +856,11 @@ export default function Chats() {
           />
         )}
       </div>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className={`toast toast-${toast.type}`}>{toast.msg}</div>
+      )}
 
       <style>{`
         /* ── Header ── */
@@ -1184,6 +1241,43 @@ export default function Chats() {
           line-height: 1;
         }
         .qr-del-btn:hover { color: var(--danger); }
+
+        /* AI lock notice */
+        .ai-lock-notice {
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 16px; gap: 6px;
+          background: var(--accent2-light);
+          border-radius: var(--radius);
+          color: var(--accent2); font-weight: 600; font-size: 14px;
+          min-height: 56px;
+        }
+        .ai-lock-sub { font-size: 12px; color: var(--text-muted); font-weight: 400; }
+        .closed-notice { background: var(--bg); color: var(--text-muted); border: 1.5px dashed var(--border); }
+
+        /* Offline takeover button */
+        .btn-take-over-offline {
+          background: #f1f5f9 !important;
+          color: #94a3b8 !important;
+          box-shadow: none !important;
+          cursor: pointer !important;
+        }
+        .btn-take-over-offline:hover { transform: none !important; box-shadow: none !important; }
+
+        /* Toast */
+        .toast {
+          position: fixed; bottom: 32px; left: 50%; transform: translateX(-50%);
+          padding: 13px 26px; border-radius: 14px;
+          font-size: 13.5px; font-weight: 600;
+          z-index: 9999; box-shadow: 0 8px 28px rgba(0,0,0,0.13);
+          white-space: nowrap;
+          animation: toast-in 0.22s ease;
+        }
+        .toast-warn { background: #fff7ed; color: #c2410c; border: 1.5px solid #fed7aa; }
+        .toast-success { background: #f0fdf4; color: #15803d; border: 1.5px solid #bbf7d0; }
+        @keyframes toast-in {
+          from { opacity: 0; transform: translateX(-50%) translateY(12px); }
+          to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+        }
       `}</style>
     </div>
   );
