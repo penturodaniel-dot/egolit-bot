@@ -302,8 +302,9 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
         import logging as _logging
         _logging.getLogger(__name__).info(
-            "PARSE | query=%r intent=%s categories=%s search_text=%r clarify=%s",
+            "PARSE | query=%r intent=%s categories=%s event_cat=%r date_filter=%r search_text=%r clarify=%s",
             user_text, parsed.intent, parsed.category_names,
+            parsed.event_category, parsed.date_filter,
             parsed.search_text, parsed.needs_clarification,
         )
 
