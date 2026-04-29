@@ -11,14 +11,61 @@
   > Cloudinary повністю видалено. `utils/cloudinary.py` — видалено. `config.py` — cloudinary-поля прибрано.
 
 ## Deployment
-- **Platform**: Railway
+- **Platform**: VPS [hostpro.ua](https://hostpro.ua) — повністю мігровано з Railway
 - **Repo**: https://github.com/penturodaniel-dot/egolit-bot
 - **Branch**: main
-- Railway auto-deploys on every push to `main`
-- No manual deploy needed — just `git push origin main`
 - **Docker**: Python-only image (`python:3.11-slim`). No Node.js in Docker.
   React is pre-built locally and `admin-react/dist/` is committed to git.
-- **DB**: Railway-managed PostgreSQL (`nozomi.proxy.rlwy.net:33189/railway`)
+- **DB**: PostgreSQL локально на VPS (не Railway)
+- **Автозапуск**: увімкнено (`restart: unless-stopped` у docker-compose)
+
+## Server access
+| | |
+|-|-|
+| **IP** | `91.239.234.193` |
+| **SSH** | `ssh root@91.239.234.193` |
+| **Password** | `LimoN471854921596L@` |
+| **Project path** | `/opt/egolist-bot` |
+| **Admin panel** | http://91.239.234.193:8000 |
+
+> ⚠️ Репо публічне — не зберігай тут продакшн-секрети (токени, паролі БД).
+> Цей файл лише для локального контексту Claude.
+
+### Корисні команди на сервері
+```bash
+# Переглянути логи бота
+docker logs egolist_bot -f
+
+# Переглянути логи адмін-панелі
+docker logs egolist_admin -f
+
+# Перезапустити бот
+docker compose -f /opt/egolist-bot/docker-compose.yml restart bot
+
+# Оновити після git push (rebuild + restart)
+cd /opt/egolist-bot && git pull && docker compose up -d --build bot
+
+# Оновити фронтенд (якщо змінився dist/)
+cd /opt/egolist-bot && git pull && docker compose up -d --build admin
+
+# Статус контейнерів
+docker compose -f /opt/egolist-bot/docker-compose.yml ps
+```
+
+### Deploy workflow (замість Railway auto-deploy)
+```bash
+# 1. Локально — внести зміни, збілдити фронт якщо треба
+cd admin-react && npm run build && cd ..
+
+# 2. Закомітити і запушити
+git add <files>
+git commit -m "feat: ..."
+git push origin main
+
+# 3. На сервері — підтягнути і перезапустити
+ssh root@91.239.234.193
+cd /opt/egolist-bot && git pull && docker compose up -d --build bot
+```
 
 ## Project structure
 ```
@@ -288,18 +335,30 @@ AI_PROVIDER=openai
 AI_MODEL=gpt-5-mini
 ```
 
-## Railway deploy workflow
+## Deploy workflow (VPS hostpro.ua)
+
+> Railway більше не використовується. Авто-деплою немає — після push треба вручну підтягнути на сервері.
+
 ```bash
-# Bot/backend changes:
+# 1. Backend/bot changes — локально:
 git add <files>
 git commit -m "feat: description"
 git push origin main
 
-# Frontend (React) changes — must rebuild first:
+# 2. На сервері підтягнути і перезапустити:
+ssh root@91.239.234.193
+cd /opt/egolist-bot && git pull && docker compose up -d --build bot
+
+# ───────────────────────────────────────────
+# Frontend (React) changes — спочатку білд локально:
 cd admin-react && npm run build && cd ..
 git add admin-react/dist/
 git commit -m "feat: description"
 git push origin main
+
+# Потім на сервері:
+ssh root@91.239.234.193
+cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 ```
 
 ## Known bugs fixed
