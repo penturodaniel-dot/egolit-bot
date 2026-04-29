@@ -8,6 +8,7 @@
 - **AI**: Pluggable provider (OpenAI / Groq / OpenRouter) — switch via ENV.
   Default: `gpt-5-mini`. All use OpenAI-compatible `/chat/completions` API.
 - **Image hosting**: Local VPS storage (`/uploads/` volume, served via FastAPI StaticFiles)
+  > Cloudinary повністю видалено. `utils/cloudinary.py` — видалено. `config.py` — cloudinary-поля прибрано.
 
 ## Deployment
 - **Platform**: Railway
@@ -34,10 +35,12 @@ egolist-bot/
 │   └── states.py             # FSM states: SearchFlow, LeadFlow (7 steps)
 ├── admin/
 │   └── main.py               # FastAPI: JSON API + serves React SPA from dist/
+│                             # POST /api/upload-image — зберігає файл у /app/uploads/
+│                             # StaticFiles mount: /uploads → /app/uploads (публічний доступ)
 ├── admin-react/
 │   ├── src/
 │   │   ├── pages/            # Chats, Buttons, Leads, Analytics, Performers, Events, AI Промт
-│   │   └── api.js            # All fetch() helpers (credentials: include)
+│   │   └── api.js            # All fetch() helpers + uploadImage(file) для фото-аплоаду
 │   └── dist/                 # Pre-built production bundle (committed to git)
 ├── db/
 │   ├── connection.py         # asyncpg pool
@@ -58,8 +61,8 @@ egolist-bot/
 ├── scrapers/
 │   └── seed.py               # seed_karabas_events() + seed_egolist_performers() — one-time data load
 ├── utils/
-│   └── (cloudinary.py removed — local storage used instead)
-└── config.py                 # Settings from .env
+│   └── (cloudinary.py видалено — використовується локальне сховище)
+└── config.py                 # Settings from .env (cloudinary-поля прибрано)
 ```
 
 ## DB tables
@@ -67,7 +70,7 @@ egolist-bot/
 |-------|---------|
 | `performers` | **CRM performers** — виконавці, артисти, локації, обладнання (main search table) |
 | `events` | **CRM events** — unified afisha (all sources: manual, karabas, egolist, etc.) |
-| `menu_buttons` | Dynamic bot menu buttons |
+| `bot_menu_buttons` | Dynamic bot menu buttons |
 | `bot_leads` | Collected leads (name, phone, category, budget, date, people, details) |
 | `admin_settings` | Key-value: notification_chat_id, notification_enabled, manager_online, ai_prompt_extra |
 | `human_sessions` | Legacy: active Telegram-based manager sessions |
@@ -92,6 +95,8 @@ egolist-bot/
 | `telegram` | text | Telegram handle |
 | `website` | text | Сайт |
 | `tags` | text | Теги для пошуку |
+| `image_url` | text | Головне фото (URL до /uploads/...) |
+| `gallery` | text | JSON-масив URL додаткових фото (до 5 шт.), напр. `["url1","url2"]` |
 | `is_featured` | bool | Топ-виконавець (пріоритет у видачі) |
 | `source` | text | manual / egolist (звідки додано) |
 
@@ -109,7 +114,8 @@ egolist-bot/
 | `city` | text | Місто |
 | `ticket_url` | text | Посилання на квитки |
 | `source_url` | text | Посилання на джерело |
-| `image_url` | text | Фото події |
+| `image_url` | text | Головне фото (URL до /uploads/...) |
+| `gallery` | text | JSON-масив URL додаткових фото (до 5 шт.), напр. `["url1","url2"]` |
 | `is_featured` | bool | Топ-подія |
 | `source` | text | manual / karabas / egolist |
 
@@ -173,6 +179,30 @@ egolist-bot/
          [🏠 Головне меню]
 ```
 
+### Фото-аплоад (локальне сховище)
+- **Endpoint**: `POST /api/upload-image` (multipart/form-data, поле `file`)
+- **Повертає**: `{ "url": "http://<host>/uploads/<uuid>.<ext>" }`
+- **Зберігає** у `/app/uploads/` всередині контейнера
+- **Docker volume**: `uploads_data:/app/uploads` — файли переживають рестарти
+- **Публічний доступ**: FastAPI `StaticFiles` mount на `/uploads`
+- **React**: `uploadImage(file)` в `api.js` — FormData + fetch, повертає `{ url }`
+
+### Галерея (performers + events)
+- Колонка `gallery TEXT` в обох таблицях (додана через `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`)
+- Зберігається як JSON-рядок: `'["http://host/uploads/a.jpg","http://host/uploads/b.jpg"]'`
+- React-компонент `GalleryUpload`: до 5 фото, превʼю 64×64, кнопка "+ Додати фото (N/5)", ✕ для видалення
+- При збереженні форми: `gallery: JSON.stringify(data.gallery || [])`
+- При завантаженні форми: `parseGallery(initial.gallery)` — розпаковує рядок або масив
+
+### Dynamic menu buttons — важливо!
+- Таблиця `bot_menu_buttons` — CRUD через адмін-панель (сторінка Кнопки)
+- `_PROMPT_MIGRATIONS` у `db/menu_buttons.py` запускається на КОЖНОМУ старті (коли таблиця непуста)
+  → **перезаписує ai_prompt** кнопок з оригінальними дефолтними лейблами
+  → якщо змінив промпт кнопки через адмін, але лейбл залишився стандартним — зміни скинуться після рестарту
+  → **Рішення**: міняти промпт треба в `_DEFAULT_BUTTONS` + `_PROMPT_MIGRATIONS` у коді, потім деплоїти
+- Кнопки з часовими запитами ("вихідні", "сьогодні") **не повинні мати** назв конкретних категорій в промпті
+  (інакше AI встановлює `event_category` → фільтрує тільки одну категорію → мало результатів)
+
 ### Seed data (наповнення бази)
 - `scrapers/seed.py` → `seed_karabas_events(limit=50)` + `seed_egolist_performers(limit=50)`
 - Запускаються через адмін-панель: Афіша → кнопка "Завантажити з Karabas", Виконавці → "Завантажити з Egolist"
@@ -224,6 +254,7 @@ egolist-bot/
 | `GET/POST /api/events` | Events CRUD |
 | `PUT/DELETE /api/events/{id}` | Update/delete event |
 | `POST /api/events/{id}/toggle` | Toggle published |
+| `POST /api/upload-image` | Upload photo → save to /uploads/, return URL |
 | `POST /api/seed-karabas` | Seed events from Karabas (background) |
 | `POST /api/seed-egolist-performers` | Seed performers from Egolist (background) |
 
@@ -271,7 +302,7 @@ git commit -m "feat: description"
 git push origin main
 ```
 
-## Known bugs fixed (цієї сесії)
+## Known bugs fixed
 - **Бот показував gorod.dp.ua контент** — повністю видалено всі зовнішні джерела; `db/queries.py` переписано
 - **"Нужны аниматоры" → афіша** — переписано AI промт з правилом: ім'я артиста = service
 - **"Купити білети Ольга Цибульська" → рандомні концерти** — тепер: ім'я в запиті → завжди `intent=service` + `search_text=ім'я`
@@ -279,6 +310,8 @@ git push origin main
 - **0 результатів показує 2 повідомлення** — тепер одне повідомлення з `manager_choice_keyboard()`
 - **has_more завжди true** — виправлено: fetch PAGE_SIZE+1, `has_more = fetched > PAGE_SIZE`
 - **Базовий промт не можна редагувати** — очищено до мінімального JSON-контракту; вся логіка — в полі адміна
+- **"Події на вихідні" повертає 1 результат** — кнопки з часовим запитом мали категорійні слова в промпті ("концерти, вистави") → AI фільтрував по `event_category`. Виправлено: замінено на нейтральне "всі події та заходи"
+- **Cloudinary залежність** — повністю видалено `utils/cloudinary.py`, config-поля, імпорти в scrapers
 
 ## ТЗ completion status
 | Feature | Status |
@@ -305,3 +338,5 @@ git push origin main
 | CRM-only architecture (no external APIs) | ✅ |
 | Configurable page size (PAGE_SIZE constant) | ✅ |
 | Fully editable AI prompt via admin panel | ✅ |
+| Photo upload from computer (no Cloudinary) | ✅ |
+| Gallery support (up to 5 photos) for performers + events | ✅ |
