@@ -415,9 +415,9 @@ export default function Events() {
                   <td className="ef-td-num">{idx + 1}</td>
                   <td className="ef-td-main">
                     <div className="ef-event-cell">
-                      {ev.image_url || ev.cloudinary_url ? (
+                      {ev.image_url ? (
                         <img
-                          src={ev.cloudinary_url || ev.image_url}
+                          src={ev.image_url}
                           alt={ev.title}
                           className="ef-thumb"
                           onError={e => { e.target.style.display = 'none'; }}

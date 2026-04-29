@@ -7,7 +7,7 @@
 - **Admin panel**: FastAPI + React SPA (pre-built dist committed to repo)
 - **AI**: Pluggable provider (OpenAI / Groq / OpenRouter) — switch via ENV.
   Default: `gpt-5-mini`. All use OpenAI-compatible `/chat/completions` API.
-- **Image hosting**: Cloudinary (for event photos, optional)
+- **Image hosting**: Local VPS storage (`/uploads/` volume, served via FastAPI StaticFiles)
 
 ## Deployment
 - **Platform**: Railway
@@ -58,7 +58,7 @@ egolist-bot/
 ├── scrapers/
 │   └── seed.py               # seed_karabas_events() + seed_egolist_performers() — one-time data load
 ├── utils/
-│   └── cloudinary.py         # Cloudinary upload helper
+│   └── (cloudinary.py removed — local storage used instead)
 └── config.py                 # Settings from .env
 ```
 
@@ -253,9 +253,6 @@ DB_PASSWORD=...
 ADMIN_LOGIN=admin
 ADMIN_PASSWORD=...
 MANAGER_TELEGRAM_ID=0
-CLOUDINARY_CLOUD_NAME=...
-CLOUDINARY_API_KEY=...
-CLOUDINARY_API_SECRET=...
 AI_PROVIDER=openai
 AI_MODEL=gpt-5-mini
 ```

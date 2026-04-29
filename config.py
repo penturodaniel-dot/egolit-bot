@@ -23,11 +23,6 @@ class Settings(BaseSettings):
     # Get it by messaging @userinfobot. Set to 0 to disable live chat.
     MANAGER_TELEGRAM_ID: int = 0
 
-    # Cloudinary (image hosting for event photos)
-    CLOUDINARY_CLOUD_NAME: str = ""
-    CLOUDINARY_API_KEY: str = ""
-    CLOUDINARY_API_SECRET: str = ""
-
     # AI provider switching: "openai" | "groq" | "openrouter"
     AI_PROVIDER: str = "openai"
     AI_MODEL: str = "gpt-5-mini"

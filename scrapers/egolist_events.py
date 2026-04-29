@@ -17,7 +17,6 @@ from typing import Optional
 import httpx
 
 from db.connection import get_pool
-from utils.cloudinary import upload_image
 
 logger = logging.getLogger(__name__)
 
@@ -264,34 +263,28 @@ async def _upsert(item: dict) -> tuple[int, int]:
 
     pool = await get_pool()
     existing = await pool.fetchrow(
-        "SELECT id, cloudinary_url FROM egolist_events WHERE api_id = $1", api_id
+        "SELECT id FROM egolist_events WHERE api_id = $1", api_id
     )
-
-    # Upload to Cloudinary if we have an image and no cloudinary_url yet
-    cloudinary_url: Optional[str] = existing["cloudinary_url"] if existing else None
-    if image_url and not cloudinary_url:
-        public_id = f"event_{api_id.replace('-', '_')}"
-        cloudinary_url = await upload_image(image_url, public_id)
 
     if existing:
         await pool.execute("""
             UPDATE egolist_events
                SET title=$1, description=$2, date=$3, time=$4, price=$5,
-                   place_name=$6, image_url=$7, cloudinary_url=$8,
-                   source_url=$9, event_type=$10, event_slug=$11,
+                   place_name=$6, image_url=$7,
+                   source_url=$8, event_type=$9, event_slug=$10,
                    is_active=TRUE, scraped_at=NOW()
-             WHERE api_id=$12
+             WHERE api_id=$11
         """, title, description, date_obj, time_obj, price,
-             place_name, image_url, cloudinary_url,
+             place_name, image_url,
              source_url, event_type, event_slug, api_id)
         return 0, 1
     else:
         await pool.execute("""
             INSERT INTO egolist_events
                 (api_id, title, description, date, time, price,
-                 place_name, image_url, cloudinary_url, source_url, event_type, event_slug)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+                 place_name, image_url, source_url, event_type, event_slug)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         """, api_id, title, description, date_obj, time_obj, price,
-             place_name, image_url, cloudinary_url,
+             place_name, image_url,
              source_url, event_type, event_slug)
         return 1, 0
