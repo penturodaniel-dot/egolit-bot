@@ -1005,8 +1005,16 @@ async def api_set_status(request: Request, session_id: int):
     user_id = row["user_id"]
     await set_session_status(user_id, new_status)
 
-    # When returning to AI — send main menu keyboard back to user
+    # When returning to AI — clear human_sessions + send main menu keyboard back to user
     if new_status == "ai":
+        # ── CRITICAL: remove from human_sessions so IsHumanMode filter stops intercepting ──
+        try:
+            db2 = await get_db()
+            await db2.execute("DELETE FROM human_sessions WHERE user_id = $1", user_id)
+            await db2.close()
+        except Exception:
+            pass
+
         try:
             from db.menu_buttons import load_all_buttons as _load_btns
             btns = await _load_btns()

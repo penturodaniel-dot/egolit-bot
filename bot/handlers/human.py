@@ -142,10 +142,24 @@ async def user_end_chat(message: Message, bot: Bot) -> None:
         "✅ Чат завершено. Дякуємо!\n\nЧим ще можу допомогти?",
         reply_markup=main_menu_keyboard(),
     )
+    # Save system message to CRM so admin sees it in chat
+    system_msg = "🚪 Клієнт завершив чат з менеджером"
+    try:
+        await save_outgoing_message(user.id, system_msg)
+    except Exception:
+        pass
+    # Notify manager via Telegram
     mgr_id = settings.MANAGER_TELEGRAM_ID
     if mgr_id:
         tg_ref = f"@{user.username}" if user.username else str(user.id)
-        await bot.send_message(mgr_id, f"🔴 Чат завершено клієнтом: {tg_ref} (id: {user.id})")
+        name = user.full_name or tg_ref
+        await bot.send_message(
+            mgr_id,
+            f"🔴 <b>Клієнт завершив чат</b>\n"
+            f"👤 {name} ({tg_ref})\n"
+            f"🆔 <code>{user.id}</code>",
+            parse_mode="HTML",
+        )
 
 
 # ── /endchat <user_id> — manager ends a session from Telegram ────────────
@@ -190,10 +204,24 @@ async def callback_end_chat(callback: CallbackQuery, bot: Bot) -> None:
         "✅ Чат завершено. Дякуємо!\n\nЧим ще можу допомогти?",
         reply_markup=main_menu_keyboard(),
     )
+    # Save system message to CRM so admin sees it in chat
+    system_msg = "🚪 Клієнт завершив чат з менеджером"
+    try:
+        await save_outgoing_message(user.id, system_msg)
+    except Exception:
+        pass
+    # Notify manager via Telegram
     mgr_id = settings.MANAGER_TELEGRAM_ID
     if mgr_id:
         tg_ref = f"@{user.username}" if user.username else str(user.id)
-        await bot.send_message(mgr_id, f"🔴 Чат завершено клієнтом: {tg_ref} (id: {user.id})")
+        name = user.full_name or tg_ref
+        await bot.send_message(
+            mgr_id,
+            f"🔴 <b>Клієнт завершив чат</b>\n"
+            f"👤 {name} ({tg_ref})\n"
+            f"🆔 <code>{user.id}</code>",
+            parse_mode="HTML",
+        )
 
 
 # ── Manager reply → route back to user ───────────────────────────────────
