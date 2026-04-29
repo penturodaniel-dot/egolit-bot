@@ -96,13 +96,13 @@ async def seed_karabas_events(limit: int = 50) -> dict:
                 continue
             await pool.execute("""
                 INSERT INTO events
-                    (source, title, category, date, time, price,
+                    (source, title, description, category, date, time, price,
                      venue_name, venue_address, city,
                      image_url, source_url, ticket_url,
                      is_published, is_featured, priority)
-                VALUES ('karabas',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,TRUE,FALSE,0)
+                VALUES ('karabas',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,TRUE,FALSE,0)
             """,
-                ev["title"], ev["category"],
+                ev["title"], ev.get("description", ""), ev["category"],
                 ev.get("date"), ev.get("time"),
                 ev.get("price"), ev.get("venue_name"),
                 "Дніпро", "Дніпро",
@@ -207,15 +207,18 @@ def _karabas_parse(evt: dict, category_ua: str, today) -> Optional[dict]:
     if isinstance(location, dict):
         venue_name = location.get("name")
 
+    description = (evt.get("description") or "").strip()
+
     return {
-        "title":      title,
-        "category":   category_ua,
-        "date":       date_obj,
-        "time":       time_obj,
-        "price":      price,
-        "venue_name": venue_name,
-        "image_url":  evt.get("image"),
-        "source_url": source_url,
+        "title":       title,
+        "category":    category_ua,
+        "description": description,
+        "date":        date_obj,
+        "time":        time_obj,
+        "price":       price,
+        "venue_name":  venue_name,
+        "image_url":   evt.get("image"),
+        "source_url":  source_url,
     }
 
 
