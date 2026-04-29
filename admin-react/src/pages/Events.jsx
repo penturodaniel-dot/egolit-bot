@@ -464,16 +464,12 @@ export default function Events() {
                         🎟
                       </a>
                     )}
-                    {(ev.source === 'manual' || !ev.source) && (
-                      <>
-                        <button className="ef-action-btn" onClick={() => setModal({ mode: 'edit', event: ev })}>✏️</button>
-                        <button
-                          className="ef-action-btn ef-action-del"
-                          onClick={() => handleDelete(ev)}
-                          disabled={deleting === ev.id}
-                        >🗑</button>
-                      </>
-                    )}
+                    <button className="ef-action-btn" onClick={() => setModal({ mode: 'edit', event: ev })}>✏️</button>
+                    <button
+                      className="ef-action-btn ef-action-del"
+                      onClick={() => handleDelete(ev)}
+                      disabled={deleting === ev.id}
+                    >🗑</button>
                   </td>
                 </tr>
               ))}
