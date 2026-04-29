@@ -17,6 +17,70 @@ _RU_TO_UK = str.maketrans({
     'ъ': '',  'Ъ': '',
 })
 
+# Keyword → correct performers category (catches AI mis-classification)
+# Keys are lowercase substrings to search in the user query
+_KEYWORD_CATEGORY: list[tuple[str, str]] = [
+    # Ведучі
+    ("ведущ",        "ведучі"),
+    ("ведуч",        "ведучі"),
+    ("тамада",       "ведучі"),
+    ("тамаду",       "ведучі"),
+    # Аніматори
+    ("аниматор",     "аніматори"),
+    ("аніматор",     "аніматори"),
+    ("клоун",        "аніматори"),
+    # Фото / відео
+    ("фотограф",     "фото та відеозйомка"),
+    ("відеограф",    "фото та відеозйомка"),
+    ("видеограф",    "фото та відеозйомка"),
+    ("фотозйомк",    "фото та відеозйомка"),
+    # Музиканти / DJ
+    ("диджей",       "музиканти"),
+    ("ді-джей",      "музиканти"),
+    ("dj ",          "музиканти"),
+    ("музикант",     "музиканти"),
+    ("музыкант",     "музиканти"),
+    # Декор
+    ("декор",        "оформлення та декор"),
+    ("оформлен",     "оформлення та декор"),
+    # Кейтеринг
+    ("кейтеринг",    "кейтеринг та бар"),
+    ("кейтерінг",    "кейтеринг та бар"),
+    # Кондитери
+    ("кондитер",     "кондитери"),
+    ("торт",         "кондитери"),
+    # Візажисти
+    ("визажист",     "візажисти та зачіски"),
+    ("візажист",     "візажисти та зачіски"),
+    ("макіяж",       "візажисти та зачіски"),
+    ("макияж",       "візажисти та зачіски"),
+    ("зачіск",       "візажисти та зачіски"),
+    # Ресторани
+    ("ресторан",     "ресторани та банкетні зали"),
+    ("банкет",       "ресторани та банкетні зали"),
+    ("кафе",         "ресторани та банкетні зали"),
+    # Локації
+    ("квест",        "квест-кімнати"),
+    ("готель",       "готелі та комплекси"),
+    ("отель",        "готелі та комплекси"),
+    ("фотостудія",   "фото та відеостудії"),
+    ("фотостудия",   "фото та відеостудії"),
+]
+
+
+def _fix_categories(user_text: str, category_names: list[str]) -> list[str]:
+    """If AI returned wrong/empty categories, correct them using keyword matching."""
+    low = user_text.lower()
+    matched: list[str] = []
+    for kw, cat in _KEYWORD_CATEGORY:
+        if kw in low:
+            if cat not in matched:
+                matched.append(cat)
+    # Only override if we found a confident keyword match
+    if matched:
+        return matched
+    return category_names
+
 
 def _normalize_search(text: str | None) -> str | None:
     """Transliterate common Russian characters to Ukrainian equivalents."""
@@ -86,6 +150,10 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     if isinstance(raw_names, str):
         raw_names = [raw_names] if raw_names else []
     category_names = [str(n).strip().lower() for n in raw_names if n]
+
+    # Override AI categories with keyword-based correction when intent=service
+    if data.get("intent") == "service":
+        category_names = _fix_categories(user_text, category_names)
 
     return ParsedIntent(
         intent=data.get("intent", "other"),
