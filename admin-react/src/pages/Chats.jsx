@@ -81,23 +81,6 @@ function playNotificationSound() {
   } catch {}
 }
 
-// Urgent sound — 3 sharp beeps, louder and distinct from regular notification
-function playUrgentSound() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    [0, 0.28, 0.56].forEach((delay) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.setValueAtTime(1320, ctx.currentTime + delay);
-      gain.gain.setValueAtTime(0.4, ctx.currentTime + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.22);
-      osc.start(ctx.currentTime + delay);
-      osc.stop(ctx.currentTime + delay + 0.22);
-    });
-  } catch {}
-}
 
 function sendBrowserNotification(title, body) {
   if (Notification.permission === 'granted') {
@@ -415,34 +398,11 @@ export default function Chats() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Urgent alert state (live chat request)
-  const [urgentAlert, setUrgentAlert] = useState(null); // { name, sessionId }
-
   // Refs
   const messagesEndRef = useRef(null);
   const textareaRef = useRef(null);
   const pollRef = useRef(null);
   const prevUnreadRef = useRef({});
-  const prevStatusRef = useRef({});       // tracks session statuses for ai→human detection
-  const statusInitRef = useRef(false);    // true after first poll (skip initial state alerts)
-  const titleBlinkRef = useRef(null);
-
-  const startTitleBlink = () => {
-    if (titleBlinkRef.current) return; // already blinking
-    let on = true;
-    titleBlinkRef.current = setInterval(() => {
-      document.title = on ? '🔴 НОВИЙ ЧАТ!' : 'Egolist Admin';
-      on = !on;
-    }, 700);
-  };
-
-  const stopTitleBlink = () => {
-    if (titleBlinkRef.current) {
-      clearInterval(titleBlinkRef.current);
-      titleBlinkRef.current = null;
-    }
-    document.title = 'Egolist Admin';
-  };
 
   // Request notification permission on mount
   useEffect(() => {
@@ -541,20 +501,6 @@ export default function Chats() {
         const data = await getSessions();
 
         data.forEach((s) => {
-          const prevStatus = prevStatusRef.current[s.id];
-
-          // ── Detect ai→human transition (user requested live chat) ──
-          if (statusInitRef.current && prevStatus === 'ai' && s.status === 'human') {
-            const name = s.first_name
-              ? `${s.first_name}${s.last_name ? ' ' + s.last_name : ''}`
-              : s.username || `User ${s.user_id}`;
-            playUrgentSound();
-            sendBrowserNotification('🔴 Запит на живий чат!', `${name} хоче поговорити з менеджером`);
-            setUrgentAlert({ name, sessionId: s.id });
-            startTitleBlink();
-          }
-          prevStatusRef.current[s.id] = s.status;
-
           // ── Check for new unread from sessions we're not viewing ──
           const prev = prevUnreadRef.current[s.id] || 0;
           if (
@@ -569,7 +515,6 @@ export default function Chats() {
           prevUnreadRef.current[s.id] = s.unread_count;
         });
 
-        if (!statusInitRef.current) statusInitRef.current = true;
         setSessions(data);
       } catch {}
 
@@ -912,36 +857,6 @@ export default function Chats() {
           />
         )}
       </div>
-
-      {/* Urgent live-chat alert modal */}
-      {urgentAlert && (
-        <div className="urgent-overlay" onClick={() => { setUrgentAlert(null); stopTitleBlink(); }}>
-          <div className="urgent-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="urgent-pulse">🔴</div>
-            <div className="urgent-title">Запит на живий чат!</div>
-            <div className="urgent-name">{urgentAlert.name}</div>
-            <div className="urgent-sub">хоче поговорити з менеджером прямо зараз</div>
-            <div className="urgent-actions">
-              <button
-                className="urgent-btn-go"
-                onClick={() => {
-                  navigate(`/chats/${urgentAlert.sessionId}`);
-                  setUrgentAlert(null);
-                  stopTitleBlink();
-                }}
-              >
-                💬 Перейти до чату
-              </button>
-              <button
-                className="urgent-btn-later"
-                onClick={() => { setUrgentAlert(null); stopTitleBlink(); }}
-              >
-                Пізніше
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Toast notification */}
       {toast && (
@@ -1327,61 +1242,6 @@ export default function Chats() {
           line-height: 1;
         }
         .qr-del-btn:hover { color: var(--danger); }
-
-        /* Urgent live-chat alert */
-        .urgent-overlay {
-          position: fixed; inset: 0; z-index: 10000;
-          background: rgba(0,0,0,0.55);
-          display: flex; align-items: center; justify-content: center;
-          backdrop-filter: blur(3px);
-          animation: fade-in 0.2s ease;
-        }
-        .urgent-modal {
-          background: #fff; border-radius: 20px;
-          padding: 36px 40px; text-align: center;
-          box-shadow: 0 24px 60px rgba(0,0,0,0.25), 0 0 0 4px rgba(220,38,38,0.15);
-          max-width: 380px; width: 90%;
-          animation: modal-in 0.25s cubic-bezier(0.34,1.56,0.64,1);
-        }
-        .urgent-pulse {
-          font-size: 52px; margin-bottom: 12px;
-          animation: pulse-icon 0.7s ease infinite alternate;
-          display: block;
-        }
-        @keyframes pulse-icon {
-          from { transform: scale(1); }
-          to   { transform: scale(1.18); }
-        }
-        .urgent-title {
-          font-size: 20px; font-weight: 800; color: #dc2626; margin-bottom: 10px;
-        }
-        .urgent-name {
-          font-size: 18px; font-weight: 700; color: #111827; margin-bottom: 4px;
-        }
-        .urgent-sub {
-          font-size: 13.5px; color: #6b7280; margin-bottom: 24px;
-        }
-        .urgent-actions { display: flex; flex-direction: column; gap: 10px; }
-        .urgent-btn-go {
-          padding: 14px 24px; border-radius: 12px;
-          background: linear-gradient(135deg, #ff6b35, #ff4500);
-          color: #fff; border: none; font-size: 15px; font-weight: 700;
-          cursor: pointer; box-shadow: 0 6px 18px rgba(255,107,53,0.45);
-          transition: all 0.15s;
-        }
-        .urgent-btn-go:hover { transform: translateY(-2px); box-shadow: 0 8px 22px rgba(255,107,53,0.5); }
-        .urgent-btn-later {
-          padding: 10px; border-radius: 10px;
-          background: none; border: 1.5px solid #e5e7eb;
-          color: #9ca3af; font-size: 13px; cursor: pointer;
-          transition: all 0.15s;
-        }
-        .urgent-btn-later:hover { border-color: #d1d5db; color: #6b7280; }
-        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes modal-in {
-          from { opacity: 0; transform: scale(0.8); }
-          to   { opacity: 1; transform: scale(1); }
-        }
 
         /* AI lock notice */
         .ai-lock-notice {
