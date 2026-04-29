@@ -327,9 +327,14 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             and (bool(parsed.category_names) or bool(parsed.search_text))
         )
 
+        # For event intent: NEVER ask for clarification — always search all events.
+        # Event type is never a reason to clarify; just show what's available.
+        event_needs_no_clarif = (parsed.intent == "event")
+
         if (parsed.needs_clarification and parsed.clarification_question
                 and not skip_clarification
-                and not service_needs_no_clarif):
+                and not service_needs_no_clarif
+                and not event_needs_no_clarif):
             await thinking_msg.delete()
             q = parsed.clarification_question
             if "📅" in q:
