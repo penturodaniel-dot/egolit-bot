@@ -11,7 +11,7 @@ Human-mode handlers:
 import logging
 from aiogram import Router, F, Bot
 from aiogram.filters import BaseFilter, Command
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 
 from config import settings
 from db.human_sessions import (
@@ -67,9 +67,17 @@ async def activate_human_mode(chat_id: int, user, bot: Bot) -> None:
         "💬 <b>Підключаємо менеджера...</b>\n\n"
         "Пиши — менеджер відповість найближчим часом."
     )
-    await bot.send_message(chat_id, msg_text, reply_markup=END_CHAT_KB)
+    # Remove main menu keyboard first
+    await bot.send_message(chat_id, msg_text, parse_mode="HTML", reply_markup=ReplyKeyboardRemove())
     try:
         await save_outgoing_message(user.id, msg_text)
+    except Exception:
+        pass
+    # Then show exit inline button as separate message
+    exit_text = "👇 Щоб завершити чат з менеджером:"
+    await bot.send_message(chat_id, exit_text, reply_markup=END_CHAT_KB)
+    try:
+        await save_outgoing_message(user.id, exit_text)
     except Exception:
         pass
 

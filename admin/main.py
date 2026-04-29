@@ -1002,7 +1002,33 @@ async def api_set_status(request: Request, session_id: int):
     if not row:
         return JSONResponse({"error": "not found"}, status_code=404)
 
-    await set_session_status(row["user_id"], new_status)
+    user_id = row["user_id"]
+    await set_session_status(user_id, new_status)
+
+    # When returning to AI — send main menu keyboard back to user
+    if new_status == "ai":
+        try:
+            from db.menu_buttons import load_all_buttons as _load_btns
+            btns = await _load_btns()
+            root = [b for b in btns if b.parent_id is None and b.is_active]
+            rows = []
+            for i in range(0, len(root), 2):
+                row_kb = [{"text": root[i].display}]
+                if i + 1 < len(root):
+                    row_kb.append({"text": root[i + 1].display})
+                rows.append(row_kb)
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"https://api.telegram.org/bot{settings.BOT_TOKEN}/sendMessage",
+                    json={
+                        "chat_id": user_id,
+                        "text": "🏠 Головне меню",
+                        "reply_markup": {"keyboard": rows, "resize_keyboard": True},
+                    }
+                )
+        except Exception:
+            pass
+
     return JSONResponse({"ok": True})
 
 
