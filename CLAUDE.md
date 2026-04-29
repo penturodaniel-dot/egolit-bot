@@ -122,7 +122,7 @@ egolist-bot/
 | `admin_settings` | Key-value: notification_chat_id, notification_enabled, manager_online, ai_prompt_extra |
 | `human_sessions` | Legacy: active Telegram-based manager sessions |
 | `chat_sessions` | CRM: one row per user (status: ai/human/closed, tag, unread_count) |
-| `chat_messages` | CRM: full message history (direction: in/out), fields: `content`, `sent_at` |
+| `chat_messages` | CRM: full message history (direction: in/out), fields: `content`, `sent_at`, `media_url`, `msg_type` |
 | `quick_replies` | Admin quick-reply scripts for chat |
 
 > **Deprecated/unused for bot search**: `egolist_events`, `egolist_products`, `bot_places`, `bot_events`
@@ -186,6 +186,18 @@ egolist-bot/
    - `intent=other` → `needs_clarification=true` → відповідь з пропозицією звернутись до менеджера
 4. Результати: `PAGE_SIZE=2` карток + кнопка "🔄 Ще варіанти" якщо є більше
 5. При 0 результатах → `manager_choice_keyboard()` з кнопками 📝 Залишити заявку + 💬 Живий чат
+
+### event_needs_no_clarif — код-рівневий захист (важливо!)
+У `bot/handlers/search.py` є жорсткий захист: якщо `parsed.intent == "event"` → уточнення НІКОЛИ не показується, навіть якщо AI повернув `needs_clarification=True`:
+```python
+event_needs_no_clarif = (parsed.intent == "event")
+
+if (parsed.needs_clarification and parsed.clarification_question
+        and not skip_clarification
+        and not service_needs_no_clarif
+        and not event_needs_no_clarif):   # ← блокує будь-яке уточнення для подій
+```
+Це виправляє клас багів: "Куди піти сьогодні", "Куди з дітьми", "Ідея для побачення" — усі кнопки event-типу більше ніколи не питають "Оберіть тип заходу".
 
 ### Pagination
 - **`PAGE_SIZE = 2`** — константа у верхній частині `bot/handlers/search.py`
@@ -387,6 +399,15 @@ event_category (тільки для intent=event)
 - **Публічний доступ**: FastAPI `StaticFiles` mount на `/uploads`
 - **React**: `uploadImage(file)` в `api.js` — FormData + fetch, повертає `{ url }`
 
+### Видалення файлів при видаленні запису
+`_delete_upload_files(*urls)` — хелпер у `admin/main.py` (поряд із `UPLOADS_DIR`):
+- Приймає будь-яку кількість URL (або JSON-масив рядків як `gallery`)
+- Витягує ім'я файлу з URL (`split('/uploads/')[-1]`) і видаляє з диску
+- Викликається перед `await delete_*(id)` у трьох ендпоїнтах:
+  - `DELETE /api/sessions/{id}` — спочатку видаляє `media_url` з усіх `chat_messages` сесії
+  - `DELETE /api/performers/{id}` — видаляє `image_url` + `gallery` виконавця
+  - `DELETE /api/events/{id}` — видаляє `image_url` + `gallery` події
+
 ### Галерея (performers + events)
 - Колонка `gallery TEXT` в обох таблицях (додана через `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`)
 - Зберігається як JSON-рядок: `'["http://host/uploads/a.jpg","http://host/uploads/b.jpg"]'`
@@ -405,9 +426,26 @@ event_category (тільки для intent=event)
 
 ### Seed data (наповнення бази)
 - `scrapers/seed.py` → `seed_karabas_events(limit=50)` + `seed_egolist_performers(limit=50)`
-- Запускаються через адмін-панель: Афіша → кнопка "Завантажити з Karabas", Виконавці → "Завантажити з Egolist"
-- Дедуплікація по `source_url` / `name`, безпечно перезапускати
-- Вставляють у `events` (source='karabas') та `performers` (source='egolist')
+- Запускаються через адмін-панель: Афіша → кнопка "Seed з Karabas", Виконавці → "Завантажити з Egolist"
+- **Karabas seed — upsert логіка**: нові події вставляються, існуючі (по `source_url`) оновлюються
+  - Оновлює: `title`, `date`, `time`, `description` (тільки якщо було порожнє), `price`, `venue_name`, `image_url`
+  - Повертає `{ inserted, updated, skipped, total_parsed }`
+- ⚠️ **Karabas не дає описів** у JSON-LD — поле `description` завжди порожнє. Описи треба вводити вручну через ✏️
+- Всі події (включно з `source='karabas'`) мають кнопку ✏️ редагування в адмін-панелі
+
+### CRM чат — відображення карток (фото)
+- Бот зберігає карти виконавців/подій у `chat_messages` з `msg_type='photo'` і `media_url=<url>`
+- `save_outgoing_message()` у `db/chat.py` приймає `media_url` і `msg_type`
+- `_send_product_card()` і `_send_event_card()` у `bot/handlers/search.py` викликають `save_outgoing_message(..., msg_type="photo", media_url=...)`
+- `MessageBubble` у `admin-react/src/pages/Chats.jsx` рендерить `<img>` якщо `msg.media_url`:
+  ```jsx
+  {msg.media_url && (
+    <img src={msg.media_url} alt="" className="bubble-img"
+         onClick={() => window.open(msg.media_url, '_blank')} />
+  )}
+  {msg.content && <span>{msg.content}</span>}
+  ```
+- CSS: `.bubble-img` — max-width 220px, border-radius 8px, cursor pointer, `.bubble.out .bubble-img` — margin-left auto
 
 ### Admin panel — React SPA
 - Сторінки: Заявки, Чати, Виконавці, Афіша, Аналітика, Кнопки, AI Промт, Налаштування
@@ -416,11 +454,40 @@ event_category (тільки для intent=event)
 - Секція "Синхронізація даних" з Аналітики видалена
 - **Rebuild workflow**: `cd admin-react && npm run build` → commit `dist/` → push
 
+### Urgent live-chat alert (глобальний, Layout.jsx)
+Коли користувач натискає "Живий чат" у боті (статус `ai` → `human`):
+- **Звук**: 3 beep-и на 1320Hz (Web Audio API)
+- **Модальне вікно**: повноекранний оверлей з ім'ям клієнта + кнопка "💬 Перейти до чату"
+- **Мигання вкладки**: `document.title` чергується між `'🔴 НОВИЙ ЧАТ!'` і `'Egolist Admin'` кожні 700ms
+- **Browser notification**: `Notification API` (запитує дозвіл при першому завантаженні)
+- **Polling**: кожні 3s у `Layout.jsx` (працює на БУДЬ-ЯКІЙ сторінці адмінки)
+- `statusInitRef` — пропускає першу ітерацію (не тригерить алерт для вже існуючих human-сесій при завантаженні)
+- Виявлення: `prevStatus === 'ai' && s.status === 'human'`
+
+### Manager ↔ Chat takeover flow (Chats.jsx)
+- **"Підключитись"** (`handleTakeOver`): перевіряє `managerOnline`, якщо offline → toast-попередження; якщо online → встановлює статус `human` + надсилає повідомлення клієнту
+- **"Повернути AI"** (`handleReturnToAI`): спочатку надсилає повідомлення клієнту, потім встановлює статус `ai`
+- При `status === 'ai'`: textarea заблоковано, показується `.ai-lock-notice`
+- При `status === 'closed'`: показується `.closed-notice`
+- `managerOnline` стан — поллиться кожні 15s, кнопка "Підключитись" дизейблена коли offline
+
+### Bot — human mode
+- При активації (`activate_human_mode`): надсилає два окремих повідомлення:
+  1. Текст "Підключаємо менеджера..." + `ReplyKeyboardRemove()` (прибирає головне меню)
+  2. "👇 Щоб завершити чат:" + `END_CHAT_KB` (inline-кнопка виходу)
+- При виході клієнта (`callback_end_chat` / `user_end_chat`):
+  - Зберігає системне повідомлення `"🚪 Клієнт завершив чат з менеджером"` в CRM
+  - Надсилає менеджеру форматоване Telegram-повідомлення з ім'ям та id клієнта
+- При поверненні в AI (`api_set_status("ai")` в admin/main.py):
+  - **КРИТИЧНО**: видаляє запис з `human_sessions` (`DELETE WHERE user_id=$1`)
+  - Без цього `IsHumanMode` фільтр продовжує перехоплювати повідомлення → бот відповідає "менеджер недоступний"
+  - Надсилає головне меню через Telegram Bot API (`sendMessage` з `reply_markup.keyboard`)
+
 ### Bot
 - **IsDynamicButton(BaseFilter)** — тільки відомі тексти кнопок → dynamic_menu.router; решта → search.router
 - **main_menu_keyboard()** живе в `bot/menu_cache.py` (НЕ keyboards.py)
 - **ChatPersistenceMiddleware** — зберігає кожне вхідне повідомлення автоматично
-- **Human mode check** — якщо `chat_sessions.status == 'human'`, AI пропускає; менеджер відповідає з CRM
+- **Human mode check** — `IsHumanMode` читає `human_sessions` (НЕ `chat_sessions.status`!)
 - **Lead flow**: name → phone → category → budget → date → people → details
 - **Manager online/offline**: в `admin_settings.manager_online`
 
@@ -463,6 +530,8 @@ event_category (тільки для intent=event)
 - Timestamp: **`sent_at`** (NOT `created_at`)
 - Direction: `in` (from user) / `out` (from admin/bot)
 - Read status: **`is_read`** (BOOLEAN)
+- Media: **`media_url`** (TEXT, nullable) — URL до фото/документу
+- Type: **`msg_type`** — `"text"` / `"photo"` / `"document"` / `"sticker"`
 
 ## AI provider system (pluggable)
 - **File**: `ai/client.py`
@@ -524,6 +593,15 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 - **Базовий промт не можна редагувати** — очищено до мінімального JSON-контракту; вся логіка — в полі адміна
 - **"Події на вихідні" повертає 1 результат** — кнопки з часовим запитом мали категорійні слова в промпті ("концерти, вистави") → AI фільтрував по `event_category`. Виправлено: замінено на нейтральне "всі події та заходи"
 - **Cloudinary залежність** — повністю видалено `utils/cloudinary.py`, config-поля, імпорти в scrapers
+- **"Ідея для побачення" → 0 результатів** — промпт "підійде для романтичного побачення" → AI витягував `search_text='романтичне побачення'` → ILIKE нічого не знаходив. Виправлено: спрощено до "Яка подія є в афіші Дніпра?"
+- **"Ідея для побачення" → виконавці замість афіші** — слово "захід" в промпті → AI встановлював `intent=service`. Виправлено: "Яка подія є в афіші Дніпра?" — однозначне event-формулювання
+- **Кнопки event-типу питають "Оберіть тип заходу"** — `needs_clarification=True` від AI при невідомій `event_category`. Назавжди виправлено в коді: `event_needs_no_clarif = (parsed.intent == "event")` блокує будь-яке уточнення для подій
+- **Конфлікт BASE_PROMPT та ai_prompt_extra** — дубльовані/суперечливі правила в обох. Виправлено: BASE_PROMPT = чиста JSON-схема, вся поведінка — тільки в ai_prompt_extra
+- **"Показати ще" не відображається в CRM чаті** — `callback.message.from_user` = бот, а не юзер. Виправлено: `user_id=callback.from_user.id` передається в `_send_product_card` / `_send_event_card`
+- **Urgent alert не спрацьовував на інших сторінках** — polling був тільки в `Chats.jsx`. Виправлено: перенесено в `Layout.jsx` (глобальний, працює на будь-якій сторінці)
+- **Бот відповідає "менеджер недоступний" після повернення в AI** — `api_set_status("ai")` не видаляв запис з `human_sessions`. `IsHumanMode` фільтр продовжував перехоплювати. Виправлено: `DELETE FROM human_sessions WHERE user_id=$1` в `api_set_status`
+- **Клієнт виходить з чату — менеджер не бачить у CRM** — тепер `callback_end_chat` / `user_end_chat` зберігають системне повідомлення `"🚪 Клієнт завершив чат з менеджером"` + надсилають форматоване Telegram-повідомлення менеджеру
+- **Karabas-події не можна редагувати** — кнопка ✏️ була захована для `source='karabas'`. Виправлено: всі події редагуються незалежно від джерела
 
 ## ТЗ completion status
 | Feature | Status |
@@ -552,3 +630,12 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 | Fully editable AI prompt via admin panel | ✅ |
 | Photo upload from computer (no Cloudinary) | ✅ |
 | Gallery support (up to 5 photos) for performers + events | ✅ |
+| CRM chat shows bot card thumbnails (photo bubbles) | ✅ |
+| File cleanup on delete (sessions/performers/events) | ✅ |
+| event_needs_no_clarif — events never ask for category | ✅ |
+| Global urgent alert (sound + modal + tab blink + browser notif) | ✅ |
+| Manager chat takeover (Підключитись / Повернути AI) | ✅ |
+| Hide Telegram menu on human mode, restore on AI return | ✅ |
+| Client exit chat → CRM system message + manager Telegram notif | ✅ |
+| Karabas seed — upsert (updates existing events on re-seed) | ✅ |
+| All events editable in admin regardless of source | ✅ |
