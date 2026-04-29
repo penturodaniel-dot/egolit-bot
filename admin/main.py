@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request, Form, Depends, BackgroundTasks
+from fastapi import FastAPI, Request, Form, Depends, BackgroundTasks, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -785,6 +785,34 @@ async def api_save_prompt(request: Request):
     return JSONResponse({"ok": True})
 
 
+# ── Image upload (local storage) ───────────────────────────────────────────
+
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
+
+@app.post("/api/upload-image")
+async def api_upload_image(request: Request, file: UploadFile = File(...)):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        return JSONResponse({"error": "Файл занадто великий (макс 10MB)"}, status_code=400)
+    try:
+        import uuid, pathlib
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+        ext = (file.filename or "photo.jpg").rsplit(".", 1)[-1].lower()
+        if ext not in ("jpg", "jpeg", "png", "webp", "gif"):
+            ext = "jpg"
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        path = pathlib.Path(UPLOADS_DIR) / filename
+        path.write_bytes(data)
+        # Build public URL from request host
+        base = str(request.base_url).rstrip("/")
+        url = f"{base}/uploads/{filename}"
+        return JSONResponse({"url": url})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.post("/prompt")
 async def prompt_save(
     request: Request,
@@ -1426,6 +1454,7 @@ async def api_create_performer(request: Request):
         "is_published": bool(body.get("is_published", True)),
         "is_featured": bool(body.get("is_featured", False)),
         "priority": body.get("priority", 0),
+        "gallery": body.get("gallery") or None,
     })
     return JSONResponse(_serialize_record(row))
 
@@ -1452,6 +1481,7 @@ async def api_update_performer(request: Request, performer_id: int):
         "is_published": bool(body.get("is_published", True)),
         "is_featured": bool(body.get("is_featured", False)),
         "priority": body.get("priority", 0),
+        "gallery": body.get("gallery") or None,
     })
     return JSONResponse(_serialize_record(row))
 
@@ -1508,6 +1538,7 @@ async def api_create_unified_event(request: Request):
         "is_published": bool(body.get("is_published", True)),
         "is_featured": bool(body.get("is_featured", False)),
         "priority": body.get("priority", 0),
+        "gallery": body.get("gallery") or None,
     })
     return JSONResponse(_serialize_record(row))
 
@@ -1535,6 +1566,7 @@ async def api_update_unified_event(request: Request, event_id: int):
         "is_published": bool(body.get("is_published", True)),
         "is_featured": bool(body.get("is_featured", False)),
         "priority": body.get("priority", 0),
+        "gallery": body.get("gallery") or None,
     })
     return JSONResponse(_serialize_record(row))
 
@@ -1684,6 +1716,11 @@ async def event_delete(request: Request, event_id: int):
 _assets_dir = os.path.join(REACT_DIST, "assets")
 if os.path.isdir(_assets_dir):
     app.mount("/assets", StaticFiles(directory=_assets_dir), name="react-assets")
+
+# Mount uploads directory for locally stored images
+_uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
 
 
 @app.get("/{full_path:path}", include_in_schema=False)

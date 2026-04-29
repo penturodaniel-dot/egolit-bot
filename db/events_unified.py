@@ -67,6 +67,10 @@ async def init_events_table() -> None:
             updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # Safe migration: add gallery column if it doesn't exist yet
+    await pool.execute(
+        "ALTER TABLE events ADD COLUMN IF NOT EXISTS gallery TEXT"
+    )
     await pool.execute(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_events_source_ext ON events(source, external_id) "
         "WHERE external_id IS NOT NULL"
@@ -140,8 +144,8 @@ async def create_event(data: dict) -> dict:
         INSERT INTO events
             (source, title, description, category, event_slug, date, time, price,
              venue_name, venue_address, city, image_url, source_url, ticket_url,
-             is_published, is_featured, priority, tags, internal_notes)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             is_published, is_featured, priority, tags, internal_notes, gallery)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
         RETURNING *
     """,
         data.get("source", "manual"),
@@ -158,6 +162,7 @@ async def create_event(data: dict) -> dict:
         data.get("is_published", True), data.get("is_featured", False),
         _int(data.get("priority", 0)) or 0,
         data.get("tags"), data.get("internal_notes"),
+        data.get("gallery") or None,
     )
     return dict(row)
 
@@ -171,8 +176,8 @@ async def update_event(event_id: int, data: dict) -> dict:
             venue_name=$8, venue_address=$9, city=$10,
             image_url=$11, source_url=$12, ticket_url=$13,
             is_published=$14, is_featured=$15, priority=$16,
-            tags=$17, internal_notes=$18, updated_at=NOW()
-        WHERE id=$19
+            tags=$17, internal_notes=$18, gallery=$19, updated_at=NOW()
+        WHERE id=$20
         RETURNING *
     """,
         data.get("title"), data.get("description"),
@@ -187,6 +192,7 @@ async def update_event(event_id: int, data: dict) -> dict:
         data.get("is_published", True), data.get("is_featured", False),
         _int(data.get("priority", 0)) or 0,
         data.get("tags"), data.get("internal_notes"),
+        data.get("gallery") or None,
         event_id,
     )
     return dict(row)

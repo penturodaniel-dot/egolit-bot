@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   getAllEvents, createUnifiedEvent, updateUnifiedEvent,
-  deleteUnifiedEvent, toggleUnifiedEvent,
+  deleteUnifiedEvent, toggleUnifiedEvent, uploadImage,
 } from '../api.js';
 import Header from '../components/Header.jsx';
 
@@ -16,8 +16,96 @@ const EMPTY = {
   price: '', venue_name: '', venue_address: '', city: 'Дніпро',
   image_url: '', source_url: '', ticket_url: '',
   is_published: true, is_featured: false, priority: 0,
-  tags: '', internal_notes: '',
+  tags: '', internal_notes: '', gallery: [],
 };
+
+function parseGallery(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; }
+  catch { return []; }
+}
+
+function PhotoUpload({ value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const res = await uploadImage(file);
+      onChange(res.url);
+    } catch (err) {
+      alert('Помилка завантаження: ' + err.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+  return (
+    <div>
+      {value ? (
+        <div style={{ position: 'relative', display: 'inline-block', marginBottom: 8 }}>
+          <img src={value} alt="preview" style={{ maxWidth: 180, maxHeight: 100, borderRadius: 8, objectFit: 'cover', display: 'block' }}
+            onError={e => e.target.style.display = 'none'} />
+          <button type="button" onClick={() => onChange('')}
+            style={{ position: 'absolute', top: -7, right: -7, background: '#dc2626', color: '#fff', border: 'none', borderRadius: '50%', width: 20, height: 20, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0 }}>✕</button>
+        </div>
+      ) : null}
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" style={{ display: 'none' }} onChange={handleFile} />
+      <button type="button" className="ef-upload-btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        {uploading ? '⏳ Завантаження...' : value ? '🔄 Замінити фото' : '📎 Завантажити фото'}
+      </button>
+    </div>
+  );
+}
+
+function GalleryUpload({ value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (value.length >= 5) { alert('Максимум 5 фото в галереї'); return; }
+    setUploading(true);
+    try {
+      const res = await uploadImage(file);
+      onChange([...value, res.url]);
+    } catch (err) {
+      alert('Помилка завантаження: ' + err.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+  const remove = (i) => onChange(value.filter((_, idx) => idx !== i));
+  return (
+    <div>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          {value.map((url, i) => (
+            <div key={i} style={{ position: 'relative' }}>
+              <img src={url} alt="" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--border)', display: 'block' }}
+                onError={e => e.target.style.opacity = '0.3'} />
+              <button type="button" onClick={() => remove(i)}
+                style={{ position: 'absolute', top: -7, right: -7, background: '#dc2626', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {value.length < 5 && (
+        <>
+          <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" style={{ display: 'none' }} onChange={handleFile} />
+          <button type="button" className="ef-upload-btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
+            {uploading ? '⏳ Завантаження...' : `+ Додати фото (${value.length}/5)`}
+          </button>
+        </>
+      )}
+      {value.length >= 5 && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Максимум 5 фото досягнуто</div>}
+    </div>
+  );
+}
 
 function Modal({ title, onClose, children }) {
   return (
@@ -43,15 +131,21 @@ function Field({ label, children, half }) {
 }
 
 function EventForm({ initial, onSave, onCancel }) {
-  const [data, setData] = useState({ ...EMPTY, ...initial });
+  const [data, setData] = useState({
+    ...EMPTY,
+    ...initial,
+    gallery: parseGallery(initial.gallery),
+  });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setData(p => ({ ...p, [k]: v }));
 
   const handleSubmit = async e => {
     e.preventDefault();
     setSaving(true);
-    try { await onSave(data); }
-    finally { setSaving(false); }
+    try {
+      const saveData = { ...data, gallery: JSON.stringify(data.gallery || []) };
+      await onSave(saveData);
+    } finally { setSaving(false); }
   };
 
   return (
@@ -119,16 +213,15 @@ function EventForm({ initial, onSave, onCancel }) {
         </Field>
       </div>
       <div className="ef-row">
-        <Field label="Фото (URL)">
-          <input className="ef-input" value={data.image_url || ''}
-            onChange={e => set('image_url', e.target.value)} placeholder="https://..." />
+        <Field label="Головне фото">
+          <PhotoUpload value={data.image_url || ''} onChange={v => set('image_url', v)} />
         </Field>
       </div>
-      {data.image_url && (
-        <div style={{ marginBottom: 12 }}>
-          <img src={data.image_url} alt="preview" style={{ maxHeight: 120, borderRadius: 8, objectFit: 'cover' }} />
-        </div>
-      )}
+      <div className="ef-row">
+        <Field label="Галерея (до 5 фото)">
+          <GalleryUpload value={data.gallery} onChange={v => set('gallery', v)} />
+        </Field>
+      </div>
       <div className="ef-row">
         <Field label="Опис">
           <textarea className="ef-input ef-textarea" value={data.description || ''}
@@ -587,6 +680,13 @@ export default function Events() {
         }
         .ef-btn-save:hover:not(:disabled) { opacity: 0.88; }
         .ef-btn-save:disabled { opacity: 0.55; cursor: default; }
+        .ef-upload-btn {
+          padding: 8px 14px; border: 1.5px dashed var(--border); border-radius: var(--radius-sm);
+          background: var(--bg); color: var(--text-secondary); font-size: 13px;
+          font-family: var(--font); cursor: pointer; transition: all 0.15s; display: inline-block;
+        }
+        .ef-upload-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-light, #fff3ee); }
+        .ef-upload-btn:disabled { opacity: 0.6; cursor: default; }
       `}</style>
     </div>
   );

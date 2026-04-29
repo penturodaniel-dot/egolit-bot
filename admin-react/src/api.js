@@ -179,6 +179,23 @@ export const deletePerformer = (id) =>
 export const togglePerformer = (id) =>
   request('POST', `/performers/${id}/toggle`);
 
+// ── Image upload ──────────────────────────────────────────────────────────────
+
+export const uploadImage = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE}/upload-image`, {
+    method: 'POST',
+    credentials: 'include',
+    body: formData,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw Object.assign(new Error(text || `HTTP ${res.status}`), { status: res.status });
+  }
+  return res.json();
+};
+
 // ── Unified Events / Афіша (CRM manual) ──────────────────────────────────────
 
 export const getAllEvents = () =>

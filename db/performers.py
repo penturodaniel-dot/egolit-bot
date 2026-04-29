@@ -56,6 +56,10 @@ async def init_performers_table() -> None:
             updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # Safe migration: add gallery column if it doesn't exist yet
+    await pool.execute(
+        "ALTER TABLE performers ADD COLUMN IF NOT EXISTS gallery TEXT"
+    )
     await pool.execute(
         "CREATE INDEX IF NOT EXISTS idx_performers_category ON performers(category)"
     )
@@ -86,8 +90,8 @@ async def create_performer(data: dict) -> dict:
         INSERT INTO performers
             (name, category, description, city, price_from, price_to,
              phone, instagram, telegram, website, photo_url, tags, experience,
-             is_published, is_featured, priority)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+             is_published, is_featured, priority, gallery)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
         RETURNING *
     """,
         data.get("name"), data.get("category"), data.get("description"),
@@ -98,6 +102,7 @@ async def create_performer(data: dict) -> dict:
         data.get("experience"),
         data.get("is_published", True), data.get("is_featured", False),
         _int(data.get("priority", 0)) or 0,
+        data.get("gallery") or None,
     )
     return dict(row)
 
@@ -110,8 +115,8 @@ async def update_performer(performer_id: int, data: dict) -> dict:
             price_from=$5, price_to=$6, phone=$7, instagram=$8,
             telegram=$9, website=$10, photo_url=$11, tags=$12,
             experience=$13, is_published=$14, is_featured=$15, priority=$16,
-            updated_at=NOW()
-        WHERE id=$17
+            gallery=$17, updated_at=NOW()
+        WHERE id=$18
         RETURNING *
     """,
         data.get("name"), data.get("category"), data.get("description"),
@@ -122,6 +127,7 @@ async def update_performer(performer_id: int, data: dict) -> dict:
         data.get("experience"),
         data.get("is_published", True), data.get("is_featured", False),
         _int(data.get("priority", 0)) or 0,
+        data.get("gallery") or None,
         performer_id,
     )
     return dict(row)

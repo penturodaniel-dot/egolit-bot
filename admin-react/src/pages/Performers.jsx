@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   getPerformers, createPerformer, updatePerformer,
   deletePerformer, togglePerformer, getPerformerCategories,
+  uploadImage,
 } from '../api.js';
 import Header from '../components/Header.jsx';
 
@@ -10,7 +11,96 @@ const EMPTY = {
   price_from: '', price_to: '', phone: '', instagram: '',
   telegram: '', website: '', photo_url: '', tags: '',
   experience: '', is_published: true, is_featured: false, priority: 0,
+  gallery: [],
 };
+
+function parseGallery(val) {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  try { const p = JSON.parse(val); return Array.isArray(p) ? p : []; }
+  catch { return []; }
+}
+
+function PhotoUpload({ value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const res = await uploadImage(file);
+      onChange(res.url);
+    } catch (err) {
+      alert('Помилка завантаження: ' + err.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+  return (
+    <div>
+      {value ? (
+        <div style={{ position: 'relative', display: 'inline-block', marginBottom: 8 }}>
+          <img src={value} alt="preview" style={{ maxWidth: 140, maxHeight: 90, borderRadius: 8, objectFit: 'cover', display: 'block' }}
+            onError={e => e.target.style.display = 'none'} />
+          <button type="button" onClick={() => onChange('')}
+            style={{ position: 'absolute', top: -7, right: -7, background: '#dc2626', color: '#fff', border: 'none', borderRadius: '50%', width: 20, height: 20, fontSize: 12, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, padding: 0 }}>✕</button>
+        </div>
+      ) : null}
+      <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" style={{ display: 'none' }} onChange={handleFile} />
+      <button type="button" className="pf-upload-btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
+        {uploading ? '⏳ Завантаження...' : value ? '🔄 Замінити фото' : '📎 Завантажити фото'}
+      </button>
+    </div>
+  );
+}
+
+function GalleryUpload({ value, onChange }) {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef(null);
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (value.length >= 5) { alert('Максимум 5 фото в галереї'); return; }
+    setUploading(true);
+    try {
+      const res = await uploadImage(file);
+      onChange([...value, res.url]);
+    } catch (err) {
+      alert('Помилка завантаження: ' + err.message);
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+  const remove = (i) => onChange(value.filter((_, idx) => idx !== i));
+  return (
+    <div>
+      {value.length > 0 && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+          {value.map((url, i) => (
+            <div key={i} style={{ position: 'relative' }}>
+              <img src={url} alt="" style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 8, border: '2px solid var(--border)', display: 'block' }}
+                onError={e => e.target.style.opacity = '0.3'} />
+              <button type="button" onClick={() => remove(i)}
+                style={{ position: 'absolute', top: -7, right: -7, background: '#dc2626', color: '#fff', border: 'none', borderRadius: '50%', width: 18, height: 18, fontSize: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1 }}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+      {value.length < 5 && (
+        <>
+          <input ref={inputRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" style={{ display: 'none' }} onChange={handleFile} />
+          <button type="button" className="pf-upload-btn" onClick={() => inputRef.current?.click()} disabled={uploading}>
+            {uploading ? '⏳ Завантаження...' : `+ Додати фото (${value.length}/5)`}
+          </button>
+        </>
+      )}
+      {value.length >= 5 && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Максимум 5 фото досягнуто</div>}
+    </div>
+  );
+}
 
 function Modal({ title, onClose, children }) {
   return (
@@ -36,15 +126,21 @@ function Field({ label, children, half }) {
 }
 
 function PerformerForm({ initial, categories, onSave, onCancel }) {
-  const [data, setData] = useState({ ...EMPTY, ...initial });
+  const [data, setData] = useState({
+    ...EMPTY,
+    ...initial,
+    gallery: parseGallery(initial.gallery),
+  });
   const [saving, setSaving] = useState(false);
   const set = (k, v) => setData(p => ({ ...p, [k]: v }));
 
   const handleSubmit = async e => {
     e.preventDefault();
     setSaving(true);
-    try { await onSave(data); }
-    finally { setSaving(false); }
+    try {
+      const saveData = { ...data, gallery: JSON.stringify(data.gallery || []) };
+      await onSave(saveData);
+    } finally { setSaving(false); }
   };
 
   return (
@@ -86,14 +182,12 @@ function PerformerForm({ initial, categories, onSave, onCancel }) {
         <Field label="Сайт" half>
           <input className="pf-input" value={data.website} onChange={e => set('website', e.target.value)} maxLength={200} />
         </Field>
-        <Field label="Фото URL">
-          <input className="pf-input" value={data.photo_url} onChange={e => set('photo_url', e.target.value)} maxLength={300} />
+        <Field label="Головне фото">
+          <PhotoUpload value={data.photo_url} onChange={v => set('photo_url', v)} />
         </Field>
-        {data.photo_url && (
-          <div style={{ gridColumn: 'span 2' }}>
-            <img src={data.photo_url} alt="preview" style={{ maxWidth: 120, maxHeight: 80, borderRadius: 8, objectFit: 'cover' }} onError={e => e.target.style.display = 'none'} />
-          </div>
-        )}
+        <Field label="Галерея (до 5 фото)">
+          <GalleryUpload value={data.gallery} onChange={v => set('gallery', v)} />
+        </Field>
         <Field label="Теги (через кому)">
           <input className="pf-input" value={data.tags} onChange={e => set('tags', e.target.value)} maxLength={300} placeholder="весілля, корпоратив, дитячі свята" />
         </Field>
@@ -403,6 +497,13 @@ export default function Performers() {
         .pf-checks { grid-column: span 2; display: flex; gap: 20px; }
         .pf-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--text-secondary); cursor: pointer; }
         .pf-check input { accent-color: var(--accent); width: 16px; height: 16px; }
+        .pf-upload-btn {
+          padding: 8px 14px; border: 1.5px dashed var(--border); border-radius: 8px;
+          background: var(--bg); color: var(--text-secondary); font-size: 13px;
+          font-family: var(--font); cursor: pointer; transition: all 0.15s; display: inline-block;
+        }
+        .pf-upload-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-light); }
+        .pf-upload-btn:disabled { opacity: 0.6; cursor: default; }
         .pf-actions { display: flex; justify-content: flex-end; gap: 10px; padding-top: 4px; }
         .error-msg { padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: var(--radius-sm); color: #dc2626; font-size: 13.5px; }
         .table-wrap { overflow-x: auto; border-radius: var(--radius); }
