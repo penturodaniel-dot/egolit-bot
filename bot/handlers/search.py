@@ -145,9 +145,11 @@ async def _send_product_card(
     index: int,
     reply_markup=None,
     reason: str = "",
+    user_id: int | None = None,
 ):
     """Відправляє картку продукту — з фото якщо є, інакше текстом."""
     card_text = _build_product_card(product, index, reason)
+    uid = user_id or (message.from_user.id if message.from_user else None)
 
     if product.photo_url:
         try:
@@ -159,10 +161,10 @@ async def _send_product_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
-            if message.from_user:
+            if uid:
                 try:
                     await save_outgoing_message(
-                        message.from_user.id, caption,
+                        uid, caption,
                         msg_type="photo", media_url=product.photo_url,
                     )
                 except Exception:
@@ -172,9 +174,9 @@ async def _send_product_card(
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
-    if message.from_user:
+    if uid:
         try:
-            await save_outgoing_message(message.from_user.id, card_text)
+            await save_outgoing_message(uid, card_text)
         except Exception:
             pass
 
@@ -186,9 +188,11 @@ async def _send_event_card(
     index: int,
     reply_markup=None,
     reason: str = "",
+    user_id: int | None = None,
 ):
     """Відправляє картку події — з фото якщо є, інакше текстом."""
     card_text = _build_event_card(event, index, reason)
+    uid = user_id or (message.from_user.id if message.from_user else None)
 
     if event.photo_url:
         try:
@@ -200,10 +204,10 @@ async def _send_event_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
-            if message.from_user:
+            if uid:
                 try:
                     await save_outgoing_message(
-                        message.from_user.id, caption,
+                        uid, caption,
                         msg_type="photo", media_url=event.photo_url,
                     )
                 except Exception:
@@ -213,9 +217,9 @@ async def _send_event_card(
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
-    if message.from_user:
+    if uid:
         try:
-            await save_outgoing_message(message.from_user.id, card_text)
+            await save_outgoing_message(uid, card_text)
         except Exception:
             pass
 
@@ -546,18 +550,20 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         )
         return
 
+    uid = callback.from_user.id if callback.from_user else None
+
     if products:
         for i, p in enumerate(products, 1):
             is_last = i == len(products)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _product_contact_keyboard(p, more)
-            await _send_product_card(callback.message, bot, p, i, reply_markup=markup)
+            await _send_product_card(callback.message, bot, p, i, reply_markup=markup, user_id=uid)
     elif events:
         for i, e in enumerate(events, 1):
             is_last = i == len(events)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
-            await _send_event_card(callback.message, bot, e, i, reply_markup=markup)
+            await _send_event_card(callback.message, bot, e, i, reply_markup=markup, user_id=uid)
 
 
 # ── Clarification: DATE (calendar) ─────────────────────────────────────────
