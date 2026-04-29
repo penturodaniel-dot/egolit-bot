@@ -115,15 +115,9 @@ def _build_product_card(p: ProductResult, index: int, reason: str = "") -> str:
         lines.append(f"✅ <i>{reason}</i>")
     if p.description:
         lines.append(p.description[:200])
-    contacts = []
+    # Only show phone in text — instagram/website/telegram shown as buttons below
     if p.phone:
-        contacts.append(f"📞 {p.phone}")
-    if p.instagram:
-        contacts.append(f"📷 @{p.instagram}")
-    if p.website:
-        contacts.append(f"🌐 {p.website}")
-    if contacts:
-        lines.append(" | ".join(contacts))
+        lines.append(f"📞 {p.phone}")
     return "\n".join(lines)
 
 
