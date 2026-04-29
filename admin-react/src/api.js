@@ -134,8 +134,8 @@ export const toggleButton = (id) =>
 export const getPrompt = () =>
   request('GET', '/prompt');
 
-export const savePrompt = (ai_prompt_extra) =>
-  request('POST', '/prompt', { ai_prompt_extra });
+export const savePrompt = (ai_prompt_extra, keyword_map) =>
+  request('POST', '/prompt', { ai_prompt_extra, keyword_map });
 
 // Settings
 export const getSettings = () =>

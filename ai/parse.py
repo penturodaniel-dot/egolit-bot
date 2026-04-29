@@ -17,69 +17,58 @@ _RU_TO_UK = str.maketrans({
     'ъ': '',  'Ъ': '',
 })
 
-# Keyword → correct performers category (catches AI mis-classification)
-# Keys are lowercase substrings to search in the user query
-_KEYWORD_CATEGORY: list[tuple[str, str]] = [
-    # Ведучі
-    ("ведущ",        "ведучі"),
-    ("ведуч",        "ведучі"),
-    ("тамада",       "ведучі"),
-    ("тамаду",       "ведучі"),
-    # Аніматори
-    ("аниматор",     "аніматори"),
-    ("аніматор",     "аніматори"),
-    ("клоун",        "аніматори"),
-    # Фото / відео
-    ("фотограф",     "фото та відеозйомка"),
-    ("відеограф",    "фото та відеозйомка"),
-    ("видеограф",    "фото та відеозйомка"),
-    ("фотозйомк",    "фото та відеозйомка"),
-    # Музиканти / DJ
-    ("диджей",       "музиканти"),
-    ("ді-джей",      "музиканти"),
-    ("dj ",          "музиканти"),
-    ("музикант",     "музиканти"),
-    ("музыкант",     "музиканти"),
-    # Декор
-    ("декор",        "оформлення та декор"),
-    ("оформлен",     "оформлення та декор"),
-    # Кейтеринг
-    ("кейтеринг",    "кейтеринг та бар"),
-    ("кейтерінг",    "кейтеринг та бар"),
-    # Кондитери
-    ("кондитер",     "кондитери"),
-    ("торт",         "кондитери"),
-    # Візажисти
-    ("визажист",     "візажисти та зачіски"),
-    ("візажист",     "візажисти та зачіски"),
-    ("макіяж",       "візажисти та зачіски"),
-    ("макияж",       "візажисти та зачіски"),
-    ("зачіск",       "візажисти та зачіски"),
-    # Ресторани
-    ("ресторан",     "ресторани та банкетні зали"),
-    ("банкет",       "ресторани та банкетні зали"),
-    ("кафе",         "ресторани та банкетні зали"),
-    # Локації
-    ("квест",        "квест-кімнати"),
-    ("готель",       "готелі та комплекси"),
-    ("отель",        "готелі та комплекси"),
-    ("фотостудія",   "фото та відеостудії"),
-    ("фотостудия",   "фото та відеостудії"),
-]
+# Default keyword map (used as initial value in admin panel)
+DEFAULT_KEYWORD_MAP = """\
+ведущ, ведуч, тамада → ведучі
+аниматор, аніматор, клоун → аніматори
+фотограф, відеограф, видеограф, фотозйомк → фото та відеозйомка
+диджей, ді-джей, dj, музикант, музыкант → музиканти
+декор, оформлен → оформлення та декор
+кейтеринг, кейтерінг → кейтеринг та бар
+кондитер, торт → кондитери
+визажист, візажист, макіяж, макияж, зачіск → візажисти та зачіски
+ресторан, банкет, кафе → ресторани та банкетні зали
+квест → квест-кімнати
+готель, отель → готелі та комплекси
+фотостудія, фотостудия → фото та відеостудії
+"""
 
 
-def _fix_categories(user_text: str, category_names: list[str]) -> list[str]:
-    """If AI returned wrong/empty categories, correct them using keyword matching."""
+def _parse_keyword_map(text: str) -> list[tuple[str, str]]:
+    """Parse admin-editable keyword map text into list of (keyword, category) pairs.
+
+    Format (one rule per line):
+        слово1, слово2 → категорія
+    Lines starting with # are comments. Blank lines are ignored.
+    """
+    result: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "→" not in line:
+            continue
+        left, _, right = line.partition("→")
+        category = right.strip().lower()
+        if not category:
+            continue
+        for kw in left.split(","):
+            kw = kw.strip().lower()
+            if kw:
+                result.append((kw, category))
+    return result
+
+
+def _fix_categories(user_text: str, category_names: list[str],
+                    keyword_map: list[tuple[str, str]]) -> list[str]:
+    """Override AI categories using keyword map loaded from admin settings."""
     low = user_text.lower()
     matched: list[str] = []
-    for kw, cat in _KEYWORD_CATEGORY:
+    for kw, cat in keyword_map:
         if kw in low:
             if cat not in matched:
                 matched.append(cat)
-    # Only override if we found a confident keyword match
-    if matched:
-        return matched
-    return category_names
+    return matched if matched else category_names
 
 
 def _normalize_search(text: str | None) -> str | None:
@@ -124,8 +113,11 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
     try:
         from db.settings import get_setting
         extra = await get_setting("ai_prompt_extra", "")
+        kw_map_text = await get_setting("keyword_map", DEFAULT_KEYWORD_MAP)
     except Exception:
         extra = ""
+        kw_map_text = DEFAULT_KEYWORD_MAP
+    keyword_map = _parse_keyword_map(kw_map_text or DEFAULT_KEYWORD_MAP)
 
     messages = [{"role": "system", "content": _build_system_prompt(extra)}]
 
@@ -153,7 +145,7 @@ async def parse_intent(user_text: str, history: list[dict] | None = None) -> Par
 
     # Override AI categories with keyword-based correction when intent=service
     if data.get("intent") == "service":
-        category_names = _fix_categories(user_text, category_names)
+        category_names = _fix_categories(user_text, category_names, keyword_map)
 
     return ParsedIntent(
         intent=data.get("intent", "other"),

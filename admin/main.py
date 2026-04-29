@@ -747,6 +747,7 @@ async def api_get_prompt(request: Request):
         )
     """)
     row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'ai_prompt_extra'")
+    kw_row = await db.fetchrow("SELECT value FROM admin_settings WHERE key = 'keyword_map'")
     await db.close()
     # Also return the base prompt so admin can see it (read-only reference)
     try:
@@ -755,9 +756,11 @@ async def api_get_prompt(request: Request):
         base = BASE_PROMPT_TEXT.replace("{categories}", get_categories_prompt())
     except Exception:
         base = ""
+    from ai.parse import DEFAULT_KEYWORD_MAP
     return JSONResponse({
         "ai_prompt_extra": row["value"] if row else "",
         "base_prompt": base,
+        "keyword_map": kw_row["value"] if kw_row else DEFAULT_KEYWORD_MAP,
     })
 
 
@@ -767,11 +770,17 @@ async def api_save_prompt(request: Request):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     body = await request.json()
     text = (body.get("ai_prompt_extra") or "").strip()
+    kw_map = (body.get("keyword_map") or "").strip()
     db = await get_db()
     await db.execute("""
         INSERT INTO admin_settings (key, value) VALUES ('ai_prompt_extra', $1)
         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
     """, text)
+    if kw_map:
+        await db.execute("""
+            INSERT INTO admin_settings (key, value) VALUES ('keyword_map', $1)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, kw_map)
     await db.close()
     return JSONResponse({"ok": True})
 
