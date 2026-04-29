@@ -302,7 +302,9 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
     search_error = False
     try:
         # Крок 1: AI парсить намір → точні category_ids
-        parsed = await parse_intent(user_text, history)
+        # Note: history NOT passed to parse_intent — prevents category accumulation
+        # across multiple messages (e.g. asking for animator then host returning both)
+        parsed = await parse_intent(user_text)
 
         import logging as _logging
         _logging.getLogger(__name__).info(
@@ -323,10 +325,16 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             last_offset=0,
         )
 
-        # Performers (service) have no date field — skip date clarification for them
+        # For service intent: skip ALL clarification if category or search_text already known.
+        # Only ask if query is truly ambiguous (no category AND no search text).
+        service_needs_no_clarif = (
+            parsed.intent == "service"
+            and (bool(parsed.category_names) or bool(parsed.search_text))
+        )
+
         if (parsed.needs_clarification and parsed.clarification_question
                 and not skip_clarification
-                and not (parsed.intent == "service" and "📅" in parsed.clarification_question)):
+                and not service_needs_no_clarif):
             await thinking_msg.delete()
             q = parsed.clarification_question
             if "📅" in q:
