@@ -282,7 +282,8 @@ async def _send_results(
                     pass
 
 
-async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: str):
+async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: str,
+                     skip_clarification: bool = False):
     data = await state.get_data()
     history = data.get("history", [])
 
@@ -315,7 +316,10 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             last_offset=0,
         )
 
-        if parsed.needs_clarification and parsed.clarification_question:
+        # Performers (service) have no date field — skip date clarification for them
+        if (parsed.needs_clarification and parsed.clarification_question
+                and not skip_clarification
+                and not (parsed.intent == "service" and "📅" in parsed.clarification_question)):
             await thinking_msg.delete()
             q = parsed.clarification_question
             if "📅" in q:
@@ -547,7 +551,8 @@ async def clarif_calendar_day(callback: CallbackQuery, bot: Bot, state: FSMConte
     data = await state.get_data()
     query = data.get("last_query", "")
     await state.clear()
-    await _do_search(callback.message, bot, state, f"{query}, дата {date_str}")
+    await _do_search(callback.message, bot, state, f"{query}, дата {date_str}",
+                     skip_clarification=True)
 
 
 # ── Clarification: EVENT TYPE ───────────────────────────────────────────────
@@ -574,7 +579,8 @@ async def clarif_category_chosen(callback: CallbackQuery, bot: Bot, state: FSMCo
     data = await state.get_data()
     query = data.get("last_query", "")
     await state.clear()
-    await _do_search(callback.message, bot, state, f"{label}: {query}")
+    await _do_search(callback.message, bot, state, f"{label}: {query}",
+                     skip_clarification=True)
 
 
 # ── Clarification: BUDGET ───────────────────────────────────────────────────
@@ -603,4 +609,5 @@ async def clarif_budget_chosen(callback: CallbackQuery, bot: Bot, state: FSMCont
     if max_price:
         await state.update_data(last_max_price=max_price)
     await state.clear()
-    await _do_search(callback.message, bot, state, f"{query}, бюджет {label}")
+    await _do_search(callback.message, bot, state, f"{query}, бюджет {label}",
+                     skip_clarification=True)
