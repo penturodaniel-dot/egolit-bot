@@ -205,7 +205,17 @@ function MessageBubble({ msg, session }) {
     <div className={`msg-row${isOut ? ' out' : ''}`}>
       <div className="bubble-wrap">
         <div className="bubble-sender">{senderName}</div>
-        <div className={`bubble ${isOut ? 'out' : 'in'}`}>{msg.content}</div>
+        <div className={`bubble ${isOut ? 'out' : 'in'}`}>
+          {msg.media_url && (
+            <img
+              src={msg.media_url}
+              alt=""
+              className="bubble-img"
+              onClick={() => window.open(msg.media_url, '_blank')}
+            />
+          )}
+          {msg.content && <span>{msg.content}</span>}
+        </div>
         <div className="bubble-meta">
           {formatMsgTime(msg.sent_at)}
           {isOut && (
@@ -1029,6 +1039,14 @@ export default function Chats() {
         .tick-sent { color: rgba(255,107,53,0.5); font-size: 12px; }
         .tick-read { color: var(--accent2); font-size: 12px; }
         .icon-btn-danger:hover { background: #fef2f2 !important; border-color: #fecaca !important; color: #dc2626 !important; }
+        .bubble-img {
+          display: block; width: 100%; max-width: 220px;
+          border-radius: 8px; margin-bottom: 8px;
+          cursor: pointer; object-fit: cover;
+          transition: opacity 0.15s;
+        }
+        .bubble-img:hover { opacity: 0.88; }
+        .bubble.out .bubble-img { margin-left: auto; }
 
         /* Input */
         .input-area {

@@ -159,11 +159,24 @@ async def _send_product_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
+            if message.from_user:
+                try:
+                    await save_outgoing_message(
+                        message.from_user.id, caption,
+                        msg_type="photo", media_url=product.photo_url,
+                    )
+                except Exception:
+                    pass
             return
         except (TelegramBadRequest, Exception):
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
+    if message.from_user:
+        try:
+            await save_outgoing_message(message.from_user.id, card_text)
+        except Exception:
+            pass
 
 
 async def _send_event_card(
@@ -187,11 +200,24 @@ async def _send_event_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
+            if message.from_user:
+                try:
+                    await save_outgoing_message(
+                        message.from_user.id, caption,
+                        msg_type="photo", media_url=event.photo_url,
+                    )
+                except Exception:
+                    pass
             return
         except (TelegramBadRequest, Exception):
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
+    if message.from_user:
+        try:
+            await save_outgoing_message(message.from_user.id, card_text)
+        except Exception:
+            pass
 
 
 async def _send_results(

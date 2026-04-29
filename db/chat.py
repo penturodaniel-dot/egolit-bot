@@ -231,6 +231,7 @@ async def save_outgoing_message(
     user_id: int,
     content: str,
     msg_type: str = "text",
+    media_url: str | None = None,
     tg_msg_id: int | None = None,
 ) -> None:
     """Save an outgoing (bot→user or manager→user) message to chat history."""
@@ -239,6 +240,7 @@ async def save_outgoing_message(
         direction="out",
         content=content,
         msg_type=msg_type,
+        media_url=media_url,
         tg_msg_id=tg_msg_id,
     )
 

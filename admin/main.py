@@ -789,6 +789,32 @@ async def api_save_prompt(request: Request):
 
 UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "..", "uploads")
 
+
+def _delete_upload_files(*urls) -> None:
+    """Delete local /uploads/ files by URL. Handles single URLs and JSON gallery arrays."""
+    import json as _json
+    for url in urls:
+        if not url:
+            continue
+        # Handle JSON gallery array: '["http://.../a.jpg","http://.../b.jpg"]'
+        if isinstance(url, str) and url.startswith('['):
+            try:
+                items = _json.loads(url)
+                if isinstance(items, list):
+                    _delete_upload_files(*items)
+                    continue
+            except Exception:
+                pass
+        # Extract filename from URL: http://host/uploads/uuid.jpg → uuid.jpg
+        if isinstance(url, str) and '/uploads/' in url:
+            filename = url.split('/uploads/')[-1].lstrip('/')
+            filepath = os.path.join(UPLOADS_DIR, filename)
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+            except Exception:
+                pass
+
 @app.post("/api/upload-image")
 async def api_upload_image(request: Request, file: UploadFile = File(...)):
     if not request.session.get("authenticated"):
@@ -1002,6 +1028,13 @@ async def api_mark_read(request: Request, session_id: int):
 async def api_delete_session(request: Request, session_id: int):
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    # Delete uploaded files attached to messages in this chat
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT media_url FROM chat_messages WHERE session_id=$1 AND media_url IS NOT NULL",
+        session_id
+    )
+    _delete_upload_files(*[r["media_url"] for r in rows])
     await delete_session(session_id)
     return JSONResponse({"ok": True})
 
@@ -1490,6 +1523,9 @@ async def api_update_performer(request: Request, performer_id: int):
 async def api_delete_performer(request: Request, performer_id: int):
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    performer = await get_performer(performer_id)
+    if performer:
+        _delete_upload_files(performer.get("image_url"), performer.get("gallery"))
     await delete_performer(performer_id)
     return JSONResponse({"ok": True})
 
@@ -1575,6 +1611,9 @@ async def api_update_unified_event(request: Request, event_id: int):
 async def api_delete_unified_event(request: Request, event_id: int):
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    event = await get_event(event_id)
+    if event:
+        _delete_upload_files(event.get("image_url"), event.get("gallery"))
     await delete_event(event_id)
     return JSONResponse({"ok": True})
 
