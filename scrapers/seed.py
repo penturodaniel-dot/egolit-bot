@@ -82,17 +82,36 @@ async def seed_karabas_events(limit: int = 50) -> dict:
             except Exception as e:
                 logger.error("Karabas [%s] error: %s", slug, e)
 
-    # Insert into unified events table
+    # Insert or update events table
     inserted = 0
+    updated = 0
     skipped = 0
     for ev in collected:
         try:
-            existing = await pool.fetchval(
-                "SELECT id FROM events WHERE source='karabas' AND source_url=$1",
+            existing = await pool.fetchrow(
+                "SELECT id, description FROM events WHERE source='karabas' AND source_url=$1",
                 ev["source_url"],
             )
             if existing:
-                skipped += 1
+                # Update fields that may have been empty on first seed
+                new_desc = ev.get("description", "")
+                await pool.execute("""
+                    UPDATE events SET
+                        title       = $1,
+                        description = CASE WHEN (description IS NULL OR description = '') THEN $2 ELSE description END,
+                        date        = $3,
+                        time        = $4,
+                        price       = COALESCE(NULLIF($5,''), price),
+                        venue_name  = COALESCE(NULLIF($6,''), venue_name),
+                        image_url   = COALESCE(NULLIF($7,''), image_url)
+                    WHERE id = $8
+                """,
+                    ev["title"], new_desc,
+                    ev.get("date"), ev.get("time"),
+                    ev.get("price") or "", ev.get("venue_name") or "",
+                    ev.get("image_url") or "", existing["id"],
+                )
+                updated += 1
                 continue
             await pool.execute("""
                 INSERT INTO events
@@ -112,8 +131,8 @@ async def seed_karabas_events(limit: int = 50) -> dict:
         except Exception as e:
             logger.warning("Karabas insert error '%s': %s", ev.get("title"), e)
 
-    logger.info("Karabas seed done: %d inserted, %d already exist", inserted, skipped)
-    return {"inserted": inserted, "skipped": skipped, "total_parsed": len(collected)}
+    logger.info("Karabas seed done: %d inserted, %d updated, %d skipped", inserted, updated, skipped)
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "total_parsed": len(collected)}
 
 
 def _karabas_extract_jsonld(soup: BeautifulSoup) -> list[dict]:
