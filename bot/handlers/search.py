@@ -304,6 +304,13 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         # Крок 1: AI парсить намір → точні category_ids
         parsed = await parse_intent(user_text, history)
 
+        import logging as _logging
+        _logging.getLogger(__name__).info(
+            "PARSE | query=%r intent=%s categories=%s search_text=%r clarify=%s",
+            user_text, parsed.intent, parsed.category_names,
+            parsed.search_text, parsed.needs_clarification,
+        )
+
         history.append({"role": "user", "content": user_text})
         await state.update_data(
             history=history[-8:],
