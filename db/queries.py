@@ -72,7 +72,7 @@ async def search_products(
         ProductResult(
             id=r["id"],
             name=r["name"],
-            description=(r.get("description") or "")[:300],
+            description=(r.get("description") or "")[:500],
             category=r.get("category") or "",
             city=r.get("city") or "Дніпро",
             price=r.get("price_from"),
@@ -94,7 +94,7 @@ def _row_to_event(e: dict) -> EventResult:
     return EventResult(
         id=e["id"],
         title=e["title"],
-        description=(e.get("description") or "")[:300],
+        description=(e.get("description") or "")[:500],
         date=str(e["date"]) if e.get("date") else "",
         time=str(e["time"]) if e.get("time") else None,
         price=e.get("price"),

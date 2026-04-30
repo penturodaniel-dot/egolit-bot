@@ -9,7 +9,8 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 from ai.parse import parse_intent
-from ai.respond import format_intro, generate_match_reasons
+from ai.respond import generate_match_reasons
+from ai.rerank import rerank_and_explain, CANDIDATE_FETCH
 from db.queries import search_products, search_karabas_events, search_kino_events, ProductResult, EventResult
 from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard, manager_choice_keyboard
@@ -232,8 +233,13 @@ async def _send_results(
     ai_text: str,
     has_more: bool,
     user_query: str = "",
+    precomputed_reasons: dict[int, str] | None = None,
 ):
-    """Відправляє AI-текст і картки результатів."""
+    """Відправляє AI-текст і картки результатів.
+
+    precomputed_reasons — dict {item.id: reason_text} від rerank_and_explain.
+    Якщо передано — пропускаємо окремий generate_match_reasons виклик.
+    """
     items = products or events
 
     # ── Нічого не знайдено — одне чітке повідомлення з кнопками менеджера ──
@@ -260,17 +266,21 @@ async def _send_results(
     except Exception:
         pass
 
-    # Generate "why this fits" reasons for all results in one AI call
-    reasons: list[str] = []
-    if user_query and items:
+    # Reasons: use precomputed (from rerank) or generate separately (fallback / "more" pages)
+    if precomputed_reasons is not None:
+        # Already have reasons from rerank_and_explain — build list aligned to items
+        reasons_list = [precomputed_reasons.get(item.id, "") for item in items]
+    elif user_query and items:
         try:
-            reasons = await generate_match_reasons(
+            reasons_list = await generate_match_reasons(
                 user_query,
                 products=products if products else None,
                 events=events if events else None,
             )
         except Exception:
-            reasons = [""] * len(items)
+            reasons_list = [""] * len(items)
+    else:
+        reasons_list = [""] * len(items)
 
     # Progress message — visible between cards, deleted after last one
     progress_msg = None
@@ -283,7 +293,7 @@ async def _send_results(
             is_last = i == len(products)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _product_contact_keyboard(p, more)
-            reason = reasons[i - 1] if i <= len(reasons) else ""
+            reason = reasons_list[i - 1] if i <= len(reasons_list) else ""
             await _send_product_card(message, bot, p, i, reply_markup=markup, reason=reason)
             if progress_msg and is_last:
                 try:
@@ -297,7 +307,7 @@ async def _send_results(
             is_last = i == len(events)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
-            reason = reasons[i - 1] if i <= len(reasons) else ""
+            reason = reasons_list[i - 1] if i <= len(reasons_list) else ""
             await _send_event_card(message, bot, e, i, reply_markup=markup, reason=reason)
             if progress_msg and is_last:
                 try:
@@ -322,6 +332,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
     products: list = []
     events: list = []
     ai_intro = ""
+    rerank_reasons: dict[int, str] = {}
 
     search_error = False
     try:
@@ -393,14 +404,17 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
             await start_lead_flow(message, state)
             return
 
-        # Крок 2: пошук в БД
+        # Крок 2: широкий пошук в БД (CANDIDATE_FETCH+1 кандидатів)
         date_filter = parsed.date_filter  # "today" | "weekend" | "week" | "month" | None
         search_text = parsed.search_text
         await state.update_data(last_date_filter=date_filter, last_search_text=search_text)
 
         products, events = [], []
         has_more = False
-        _fetch = PAGE_SIZE + 1  # fetch one extra to detect if more exist
+        rerank_reasons: dict[int, str] = {}
+        ai_intro = ""
+        # Fetch CANDIDATE_FETCH+1 to detect if more exist beyond our candidate window
+        _fetch = CANDIDATE_FETCH + 1
 
         if parsed.intent == "event":
             if parsed.event_category == "кіно":
@@ -416,8 +430,19 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                     date_filter=date_filter,
                     search_text=search_text,
                 )
-            has_more = len(raw) > PAGE_SIZE
-            events = raw[:PAGE_SIZE]
+            has_more = len(raw) > CANDIDATE_FETCH
+            candidates = raw[:CANDIDATE_FETCH]
+            # Крок 3: AI re-ranking — вибирає топ PAGE_SIZE з кандидатів за описом
+            if candidates:
+                rr = await rerank_and_explain(user_text, candidates, top_n=PAGE_SIZE)
+                id_map = {c.id: c for c in candidates}
+                events = [id_map[i] for i in rr.top_ids if i in id_map]
+                rerank_reasons = rr.reasons
+                ai_intro = rr.intro
+                # If AI returned fewer than PAGE_SIZE — fill with remaining candidates
+                if not events:
+                    events = candidates[:PAGE_SIZE]
+            has_more = has_more or len(candidates) > PAGE_SIZE
         else:
             raw = await search_products(
                 category_names=parsed.category_names or None,
@@ -426,16 +451,23 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
                 limit=_fetch,
                 offset=0,
             )
-            has_more = len(raw) > PAGE_SIZE
-            products = raw[:PAGE_SIZE]
+            has_more = len(raw) > CANDIDATE_FETCH
+            candidates = raw[:CANDIDATE_FETCH]
+            # Крок 3: AI re-ranking — вибирає топ PAGE_SIZE з кандидатів за описом
+            if candidates:
+                rr = await rerank_and_explain(user_text, candidates, top_n=PAGE_SIZE)
+                id_map = {c.id: c for c in candidates}
+                products = [id_map[i] for i in rr.top_ids if i in id_map]
+                rerank_reasons = rr.reasons
+                ai_intro = rr.intro
+                # If AI returned fewer than PAGE_SIZE — fill with remaining candidates
+                if not products:
+                    products = candidates[:PAGE_SIZE]
+            has_more = has_more or len(candidates) > PAGE_SIZE
 
         # Track shown IDs to prevent duplicates on "load more"
         shown_ids = [p.id for p in products] + [e.id for e in events]
         await state.update_data(shown_ids=shown_ids, last_has_more=has_more)
-
-        # Крок 3: AI генерує короткий вступ (1 речення)
-        count = len(products) or len(events)
-        ai_intro = await format_intro(user_text, has_results=bool(products or events), count=count)
 
     except Exception as e:
         search_error = True
@@ -465,7 +497,11 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         except Exception:
             await thinking_msg.delete()
 
-    await _send_results(message, bot, products, events, ai_intro, has_more=has_more, user_query=user_text)
+    await _send_results(
+        message, bot, products, events, ai_intro,
+        has_more=has_more, user_query=user_text,
+        precomputed_reasons=rerank_reasons if rerank_reasons else None,
+    )
 
 
 # Фіксовані кнопки видалені — тепер всі кнопки меню динамічні (dynamic_menu.py)
