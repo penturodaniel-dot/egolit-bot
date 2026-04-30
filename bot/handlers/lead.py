@@ -1,5 +1,5 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
 from datetime import date as _date
 
@@ -151,10 +151,9 @@ async def start_lead_flow(message: Message, state: FSMContext, prefill: dict | N
     if prefill:
         await state.update_data(**prefill)
     await state.set_state(LeadFlow.waiting_name)
-    await message.answer(
-        "📝 <b>Залишити заявку</b>\n\nЯк тебе звати?",
-        reply_markup=lead_cancel_keyboard(),
-    )
+    # Remove the main reply keyboard so it doesn't distract during the form
+    await message.answer("📝 <b>Залишити заявку</b>", reply_markup=ReplyKeyboardRemove())
+    await message.answer("Як тебе звати?", reply_markup=lead_cancel_keyboard())
 
 
 @router.message(F.text == "📞 Поговорити з менеджером")
