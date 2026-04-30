@@ -418,18 +418,28 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
         _fetch = CANDIDATE_FETCH + 1
 
         if parsed.intent == "event":
-            if parsed.event_category == "кіно":
-                raw = await search_kino_events(
+            # When search_text is set (specific title/name), skip category filter —
+            # the event's category might differ from what AI guessed (e.g. movie
+            # classified as 'концерти'). Search across ALL categories by name.
+            if search_text:
+                raw = await search_karabas_events(
+                    category=None,
                     limit=_fetch,
                     date_filter=date_filter,
                     search_text=search_text,
+                )
+            elif parsed.event_category == "кіно":
+                raw = await search_kino_events(
+                    limit=_fetch,
+                    date_filter=date_filter,
+                    search_text=None,
                 )
             else:
                 raw = await search_karabas_events(
                     category=parsed.event_category,
                     limit=_fetch,
                     date_filter=date_filter,
-                    search_text=search_text,
+                    search_text=None,
                 )
             has_more = len(raw) > CANDIDATE_FETCH
             candidates = raw[:CANDIDATE_FETCH]
@@ -575,15 +585,20 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         _fetch = CANDIDATE_FETCH
         _logger.info("MORE | pool low, fetching from DB at offset=%d", new_offset)
         if intent == "event":
-            if event_category == "кіно":
+            if search_text:
+                new_raw = await search_karabas_events(
+                    category=None, limit=_fetch, offset=new_offset,
+                    date_filter=date_filter, search_text=search_text,
+                )
+            elif event_category == "кіно":
                 new_raw = await search_kino_events(
                     limit=_fetch, offset=new_offset,
-                    date_filter=date_filter, search_text=search_text,
+                    date_filter=date_filter, search_text=None,
                 )
             else:
                 new_raw = await search_karabas_events(
                     category=event_category, limit=_fetch, offset=new_offset,
-                    date_filter=date_filter, search_text=search_text,
+                    date_filter=date_filter, search_text=None,
                 )
         else:
             new_raw = await search_products(
