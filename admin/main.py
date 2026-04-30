@@ -690,7 +690,7 @@ async def _run_seed_karabas_bg():
 
 @app.post("/api/seed-egolist-performers")
 async def api_seed_egolist_performers(request: Request, background_tasks: BackgroundTasks):
-    """Seed up to 50 performers from Egolist API → performers table."""
+    """Seed up to 10 performers per category from Egolist API → performers table."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     background_tasks.add_task(_run_seed_egolist_bg)
@@ -699,7 +699,7 @@ async def api_seed_egolist_performers(request: Request, background_tasks: Backgr
 
 async def _run_seed_egolist_bg():
     try:
-        result = await seed_egolist_performers(limit=50)
+        result = await seed_egolist_performers(per_category=10)
         _sched_logger.info("Egolist performers seed done: %s", result)
     except Exception:
         _sched_logger.exception("Egolist performers seed failed")

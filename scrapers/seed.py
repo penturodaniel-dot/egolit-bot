@@ -243,36 +243,53 @@ def _karabas_parse(evt: dict, category_ua: str, today) -> Optional[dict]:
 
 # ── Egolist → performers table ────────────────────────────────────────────────
 
-# Categories to seed (mix of specialists and locations)
+# All seedable categories (specialists + locations + equipment)
 SEED_CATEGORIES = [
+    # Спеціалісти
     "ведучі", "музиканти", "фото та відеозйомка", "аніматори",
-    "артисти та шоу", "оформлення та декор", "ресторани та банкетні зали",
-    "кондитери", "танцювальні шоу", "організатори заходів",
+    "артисти та шоу", "кейтеринг та бар", "оформлення та декор",
+    "організатори заходів", "візажисти та зачіски", "кондитери",
+    "танцювальні шоу", "актори", "хостес", "персонал для заходів",
+    "майстер-класи",
+    # Локації
+    "ресторани та банкетні зали", "розважальні заклади", "готелі та комплекси",
+    "квест-кімнати", "нічні клуби та караоке", "фото та відеостудії",
+    "конференц-зали", "місця для весільних церемоній", "івент-простори",
+    "культурні локації",
+    # Обладнання
+    "звукове обладнання", "світлове обладнання", "конструкції та сцени",
+    "спецефекти", "декор і фотозони",
 ]
 
 EGOLIST_BASE = "https://api.egolist.ua/api"
 
 
-async def seed_egolist_performers(limit: int = 50) -> dict:
-    """Fetch performers from Egolist API and insert up to `limit` into performers table."""
+async def seed_egolist_performers(per_category: int = 10, limit: int | None = None) -> dict:
+    """Fetch performers from Egolist API — up to per_category items per category.
+
+    Args:
+        per_category: max items to fetch per category (default 10)
+        limit: optional hard cap on total collected (default = per_category * categories)
+    """
     pool = await get_pool()
     collected: list[dict] = []
-    per_cat = max(5, limit // len(SEED_CATEGORIES))  # ~5 per category
+    total_limit = limit or (per_category * len(SEED_CATEGORIES))
 
     async with httpx.AsyncClient(
         headers=EGO_HEADERS, timeout=20, follow_redirects=True
     ) as client:
         for cat_name in SEED_CATEGORIES:
-            if len(collected) >= limit:
+            if len(collected) >= total_limit:
                 break
             uuid = CATEGORIES.get(cat_name)
             if not uuid:
+                logger.warning("Egolist seed: no UUID for category %r", cat_name)
                 continue
             try:
                 resp = await client.get(
                     f"{EGOLIST_BASE}/products/by-subcategory",
                     params={"category_id": uuid, "city_slug": "dnipro",
-                            "page": 1, "per_page": 50},
+                            "page": 1, "per_page": per_category * 2},
                 )
                 if resp.status_code != 200:
                     logger.warning("Egolist API [%s] HTTP %s", cat_name, resp.status_code)
@@ -280,11 +297,11 @@ async def seed_egolist_performers(limit: int = 50) -> dict:
 
                 items = _extract_list(resp.json())
                 products = _parse_products(items)
-                logger.info("Egolist [%s] got %d products", cat_name, len(products))
+                logger.info("Egolist [%s] got %d products (want %d)", cat_name, len(products), per_category)
 
                 count = 0
                 for p in products:
-                    if count >= per_cat or len(collected) >= limit:
+                    if count >= per_category or len(collected) >= total_limit:
                         break
                     collected.append({
                         "name":        p.name,
@@ -304,16 +321,44 @@ async def seed_egolist_performers(limit: int = 50) -> dict:
             except Exception as e:
                 logger.error("Egolist seed [%s] error: %s", cat_name, e)
 
-    # Insert into performers table (deduplicate by name+category)
+    # Upsert into performers table: insert new, update existing (by name+source)
     inserted = 0
+    updated = 0
     skipped = 0
     for p in collected:
         try:
-            existing = await pool.fetchval(
+            existing = await pool.fetchrow(
                 "SELECT id FROM performers WHERE name=$1 AND source='egolist'", p["name"]
             )
             if existing:
-                skipped += 1
+                # Update fields that may have changed (keep manually-edited description)
+                await pool.execute("""
+                    UPDATE performers SET
+                        category    = $1,
+                        description = CASE WHEN (description IS NULL OR description = '') THEN $2 ELSE description END,
+                        city        = COALESCE(NULLIF($3,''), city),
+                        price_from  = COALESCE($4, price_from),
+                        phone       = COALESCE(NULLIF($5,''), phone),
+                        instagram   = COALESCE(NULLIF($6,''), instagram),
+                        telegram    = COALESCE(NULLIF($7,''), telegram),
+                        website     = COALESCE(NULLIF($8,''), website),
+                        photo_url   = COALESCE(NULLIF($9,''), photo_url),
+                        is_featured = $10
+                    WHERE id = $11
+                """,
+                    p["category"],
+                    p["description"],
+                    p["city"] or "",
+                    p["price_from"],
+                    p["phone"] or "",
+                    p["instagram"] or "",
+                    p["telegram"] or "",
+                    p["website"] or "",
+                    p["photo_url"] or "",
+                    p["is_featured"],
+                    existing["id"],
+                )
+                updated += 1
                 continue
             await pool.execute("""
                 INSERT INTO performers
@@ -331,5 +376,8 @@ async def seed_egolist_performers(limit: int = 50) -> dict:
         except Exception as e:
             logger.warning("Egolist performer insert error '%s': %s", p.get("name"), e)
 
-    logger.info("Egolist performers seed done: %d inserted, %d skipped", inserted, skipped)
-    return {"inserted": inserted, "skipped": skipped, "total_parsed": len(collected)}
+    logger.info(
+        "Egolist performers seed done: %d inserted, %d updated, %d skipped (total parsed: %d)",
+        inserted, updated, skipped, len(collected),
+    )
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "total_parsed": len(collected)}
