@@ -104,7 +104,8 @@ egolist-bot/
 ├── ai/
 │   ├── client.py             # Provider-agnostic OpenAI-compatible client
 │   ├── parse.py              # ParsedIntent — minimal base prompt + admin extra instructions
-│   └── respond.py            # format_intro() + generate_match_reasons() (no hallucination)
+│   ├── rerank.py             # rerank_and_explain() — single LLM call: picks top-N + reasons + intro
+│   └── respond.py            # generate_match_reasons() (fallback, no hallucination)
 ├── scrapers/
 │   └── seed.py               # seed_karabas_events() + seed_egolist_performers() — one-time data load
 ├── utils/
@@ -184,8 +185,9 @@ egolist-bot/
    - `intent=event, інше` → `search_karabas_events()` → шукає в `events` по category + search_text
    - `intent=lead` → запускає LeadFlow
    - `intent=other` → `needs_clarification=true` → відповідь з пропозицією звернутись до менеджера
-4. Результати: `PAGE_SIZE=2` карток + кнопка "🔄 Ще варіанти" якщо є більше
-5. При 0 результатах → `manager_choice_keyboard()` з кнопками 📝 Залишити заявку + 💬 Живий чат
+4. **AI reranking** (`ai/rerank.py`): БД повертає `CANDIDATE_FETCH=15` кандидатів → `rerank_and_explain()` читає повні описи → один LLM-виклик повертає `{top_ids, reasons, intro}` → показуються `PAGE_SIZE=2` найкращих
+5. Результати: `PAGE_SIZE=2` карток з причиною підбору + кнопка "🔄 Ще варіанти" якщо є більше
+6. При 0 результатах → `manager_choice_keyboard()` з кнопками 📝 Залишити заявку + 💬 Живий чат
 
 ### event_needs_no_clarif — код-рівневий захист (важливо!)
 У `bot/handlers/search.py` є жорсткий захист: якщо `parsed.intent == "event"` → уточнення НІКОЛИ не показується, навіть якщо AI повернув `needs_clarification=True`:
@@ -199,11 +201,20 @@ if (parsed.needs_clarification and parsed.clarification_question
 ```
 Це виправляє клас багів: "Куди піти сьогодні", "Куди з дітьми", "Ідея для побачення" — усі кнопки event-типу більше ніколи не питають "Оберіть тип заходу".
 
-### Pagination
-- **`PAGE_SIZE = 2`** — константа у верхній частині `bot/handlers/search.py`
-- Перший запит: fetch `PAGE_SIZE+1`, показати `PAGE_SIZE`, `has_more = fetched > PAGE_SIZE`
-- "Ще варіанти": offset зсувається на `PAGE_SIZE`, та сама логіка
-- Кнопка "Ще варіанти" зникає коли більше немає результатів
+### Pagination + AI reranking
+- **`PAGE_SIZE = 2`** — скільки карток показується за раз (константа у верхній частині `bot/handlers/search.py`)
+- **`CANDIDATE_FETCH = 15`** (`ai/rerank.py`) — скільки рядків тягнемо з БД для reranking
+- **Перший запит**: fetch `CANDIDATE_FETCH+1` → `has_more = len(raw) > CANDIDATE_FETCH` → беремо 15 кандидатів → `rerank_and_explain()` → показуємо `PAGE_SIZE` найкращих
+- **Кандидатський пул**: всі 15 кандидатів серіалізуються через `dataclasses.asdict()` і зберігаються в FSM state як `all_candidates`
+- **"Ще варіанти"** (`callback_more_results`):
+  1. Відновлює пул з state (`ProductResult(**d)` / `EventResult(**d)`)
+  2. Фільтрує вже показані (`shown_ids`)
+  3. Якщо залишилось < `PAGE_SIZE * 2` — підтягує ще `CANDIDATE_FETCH` рядків з БД за новим offset, додає унікальні
+  4. Викликає `rerank_and_explain(last_query, remaining, top_n=PAGE_SIZE)` → AI ранжує залишок
+  5. Відправляє AI intro + картки з reasons для кожного результату
+  6. `has_more` = кількість залишених у пулі після цього батчу > 0
+- **Дублів немає**: `shown_ids` відстежує всі показані ID між батчами
+- Кнопка "Ще варіанти" зникає коли пул вичерпано
 
 ### AI prompt architecture
 - **`BASE_PROMPT_TEXT`** (`ai/parse.py`) — мінімальний технічний контракт: тільки JSON-схема полів (не змінювати!)
@@ -377,8 +388,9 @@ event_category (тільки для intent=event)
 | `clarification_question` | текст або null |
 
 ### match reasons — без галюцинацій
-- `generate_match_reasons()` (`ai/respond.py`) — генерує пояснення чому результат підходить
-- Суворе правило: спирається ТІЛЬКИ на факти з опису, заборонено "можливо/якщо/може бути"
+- **Основний шлях**: `rerank_and_explain()` (`ai/rerank.py`) — один LLM-виклик повертає `reasons` одночасно з reranking. `precomputed_reasons` передається в `_send_results` → жодного додаткового запиту.
+- **Fallback**: `generate_match_reasons()` (`ai/respond.py`) — викликається тільки якщо `precomputed_reasons=None` (напр. у старому коді без reranking)
+- Суворе правило в обох: спирається ТІЛЬКИ на факти з опису, заборонено "можливо/якщо/може бути"
 - Якщо ім'я артиста в запиті НЕ збігається з назвою варіанту → повертає `""`
 - Порожня причина → картка показується без ✅ рядка
 
@@ -639,3 +651,5 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 | Client exit chat → CRM system message + manager Telegram notif | ✅ |
 | Karabas seed — upsert (updates existing events on re-seed) | ✅ |
 | All events editable in admin regardless of source | ✅ |
+| AI reranking — semantic match via full descriptions (rerank.py) | ✅ |
+| Show More — AI reranking + reasons + no duplicates across pages | ✅ |
