@@ -46,7 +46,7 @@ KARABAS_CATEGORIES = [
 ]
 
 
-async def seed_karabas_events(limit: int = 9999) -> dict:
+async def seed_karabas_events(limit: int = 9999, progress_callback=None) -> dict:
     """Scrape Karabas Dnipro events and insert all available events into events table."""
     pool = await get_pool()
     collected: list[dict] = []
@@ -55,7 +55,12 @@ async def seed_karabas_events(limit: int = 9999) -> dict:
     async with httpx.AsyncClient(
         headers=KARABAS_HEADERS, timeout=30, follow_redirects=True
     ) as client:
-        for slug, category_ua in KARABAS_CATEGORIES:
+        for cat_idx, (slug, category_ua) in enumerate(KARABAS_CATEGORIES):
+            if progress_callback:
+                try:
+                    await progress_callback(cat_idx, len(KARABAS_CATEGORIES), category_ua)
+                except Exception:
+                    pass
             try:
                 url = f"{KARABAS_BASE}/{slug}/"
                 resp = await client.get(url)

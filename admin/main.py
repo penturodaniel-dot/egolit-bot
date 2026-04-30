@@ -40,7 +40,7 @@ from db.chat import (
 )
 from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
 from scrapers.egolist_events import scrape_all as events_scrape_all, init_egolist_events
-from scrapers.seed import seed_karabas_events, seed_egolist_performers, SEED_CATEGORIES
+from scrapers.seed import seed_karabas_events, seed_egolist_performers, SEED_CATEGORIES, KARABAS_CATEGORIES
 from db.performers import (
     init_performers_table,
     get_all_performers, get_performer, create_performer, update_performer,
@@ -671,20 +671,53 @@ async def api_sync_egolist(request: Request, background_tasks: BackgroundTasks):
     return JSONResponse({"ok": True, "status": "started"})
 
 
+_karabas_seed_status: dict = {
+    "running": False, "current": 0, "total": 0, "current_cat": "",
+    "inserted": 0, "updated": 0, "total_parsed": 0, "done": False, "error": None,
+}
+
+
 @app.post("/api/seed-karabas")
 async def api_seed_karabas(request: Request, background_tasks: BackgroundTasks):
-    """Seed up to 50 events from Karabas Dnipro → unified events table."""
+    """Scrape all events from Karabas Dnipro → unified events table."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if _karabas_seed_status.get("running"):
+        return JSONResponse({"ok": False, "status": "already_running"})
     background_tasks.add_task(_run_seed_karabas_bg)
     return JSONResponse({"ok": True, "status": "started"})
 
 
+@app.get("/api/seed-karabas-status")
+async def api_seed_karabas_status(request: Request):
+    """Return current Karabas seed progress."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse(_karabas_seed_status)
+
+
 async def _run_seed_karabas_bg():
+    global _karabas_seed_status
+    _karabas_seed_status = {
+        "running": True, "current": 0, "total": len(KARABAS_CATEGORIES),
+        "current_cat": "", "inserted": 0, "updated": 0,
+        "total_parsed": 0, "done": False, "error": None,
+    }
     try:
-        result = await seed_karabas_events()
+        async def _on_progress(idx: int, total: int, cat_name: str):
+            _karabas_seed_status.update({"current": idx + 1, "current_cat": cat_name})
+
+        result = await seed_karabas_events(progress_callback=_on_progress)
+        _karabas_seed_status.update({
+            "running": False, "done": True,
+            "current": len(KARABAS_CATEGORIES),
+            "inserted": result["inserted"],
+            "updated": result["updated"],
+            "total_parsed": result["total_parsed"],
+        })
         _sched_logger.info("Karabas seed done: %s", result)
-    except Exception:
+    except Exception as e:
+        _karabas_seed_status.update({"running": False, "error": str(e)})
         _sched_logger.exception("Karabas seed failed")
 
 

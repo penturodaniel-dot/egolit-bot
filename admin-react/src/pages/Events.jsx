@@ -261,20 +261,83 @@ function EventForm({ initial, onSave, onCancel }) {
   );
 }
 
-function SeedBtn({ onSeed }) {
-  const [state, setState] = useState('idle');
+function SeedProgress({ onSeed }) {
+  const [status, setStatus] = useState(null);
+  const pollRef = useRef(null);
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const poll = async (reloadOnDone) => {
+    try {
+      const r = await fetch('/api/seed-karabas-status', { credentials: 'include' });
+      const s = await r.json();
+      setStatus(s);
+      if (!s.running) {
+        stopPoll();
+        if (s.done && reloadOnDone) { setTimeout(onSeed, 800); }
+      }
+    } catch { stopPoll(); }
+  };
+
   const run = async () => {
-    if (state === 'running') return;
-    setState('running');
+    if (status?.running) return;
     try {
       await fetch('/api/seed-karabas', { method: 'POST', credentials: 'include' });
-      setState('done');
-      setTimeout(() => { setState('idle'); onSeed(); }, 2000);
-    } catch { setState('idle'); }
+      setStatus({ running: true, current: 0, total: 8, current_cat: '', done: false, error: null });
+      stopPoll();
+      pollRef.current = setInterval(() => poll(true), 1000);
+    } catch { }
   };
+
+  useEffect(() => {
+    poll(false);
+    return stopPoll;
+  }, []);
+
+  const pct = status?.total ? Math.round((status.current / status.total) * 100) : 0;
+  const isRunning = status?.running;
+  const isDone = status?.done;
+  const hasError = status?.error;
+
+  if (isRunning) {
+    return (
+      <div className="seed-progress-wrap">
+        <div className="seed-progress-header">
+          <span className="seed-spinner" />
+          <span className="seed-progress-label">
+            {status.current_cat ? `Категорія: ${status.current_cat}` : 'Підготовка...'}
+          </span>
+          <span className="seed-progress-pct">{pct}%</span>
+        </div>
+        <div className="seed-progress-bar-bg">
+          <div className="seed-progress-bar-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="seed-progress-sub">{status.current} / {status.total} категорій</div>
+      </div>
+    );
+  }
+
+  if (isDone) {
+    return (
+      <div className="seed-progress-wrap seed-done">
+        <span>✅ Готово: <b>+{status.inserted}</b> нових, <b>{status.updated}</b> оновлено</span>
+        <button className="seed-reset-btn" onClick={() => setStatus(null)}>✕</button>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="seed-progress-wrap seed-error">
+        <span>⚠️ Помилка: {status.error}</span>
+        <button className="seed-reset-btn" onClick={() => setStatus(null)}>✕</button>
+      </div>
+    );
+  }
+
   return (
-    <button className="ef-btn-seed" onClick={run} disabled={state === 'running'} title="Завантажити до 50 подій з dnipro.karabas.com">
-      {state === 'running' ? '⏳ Завантаження...' : state === 'done' ? '✅ Готово' : '🎟 Seed з Karabas'}
+    <button className="ef-btn-seed" onClick={run} title="Завантажити всі події з dnipro.karabas.com">
+      🎟 Seed з Karabas
     </button>
   );
 }
@@ -375,7 +438,7 @@ export default function Events() {
           <option value="">Всі джерела</option>
           {sources.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
-        <SeedBtn onSeed={load} />
+        <SeedProgress onSeed={load} />
         <button className="ef-btn-add" onClick={() => setModal({ mode: 'add' })}>
           + Додати подію
         </button>
@@ -683,6 +746,31 @@ export default function Events() {
         }
         .ef-upload-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); background: var(--accent-light, #fff3ee); }
         .ef-upload-btn:disabled { opacity: 0.6; cursor: default; }
+
+        /* Seed progress bar */
+        .seed-progress-wrap {
+          display: flex; flex-direction: column; gap: 4px;
+          min-width: 220px; max-width: 300px;
+          padding: 7px 10px; border-radius: var(--radius-sm);
+          border: 1px solid var(--border); background: var(--card-bg);
+          font-size: 12px;
+        }
+        .seed-progress-header { display: flex; align-items: center; gap: 6px; }
+        .seed-progress-label { flex: 1; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .seed-progress-pct { font-weight: 700; color: var(--accent); flex-shrink: 0; }
+        .seed-progress-bar-bg { height: 5px; border-radius: 3px; background: var(--border); overflow: hidden; }
+        .seed-progress-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.4s ease; }
+        .seed-progress-sub { font-size: 11px; color: var(--text-muted); }
+        .seed-done { flex-direction: row; align-items: center; justify-content: space-between; border-color: #86efac; background: #f0fdf4; color: #15803d; font-weight: 500; }
+        .seed-error { flex-direction: row; align-items: center; justify-content: space-between; border-color: #fca5a5; background: #fef2f2; color: #b91c1c; font-weight: 500; }
+        .seed-reset-btn { background: none; border: none; cursor: pointer; font-size: 13px; color: inherit; opacity: 0.6; padding: 0 2px; }
+        .seed-reset-btn:hover { opacity: 1; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .seed-spinner {
+          width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0;
+          border: 2px solid var(--border); border-top-color: var(--accent);
+          animation: spin 0.8s linear infinite; display: inline-block;
+        }
       `}</style>
     </div>
   );
