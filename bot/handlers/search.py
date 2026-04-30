@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 from datetime import date as _date
 
 from aiogram import Router, F, Bot
@@ -467,7 +468,13 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
         # Track shown IDs to prevent duplicates on "load more"
         shown_ids = [p.id for p in products] + [e.id for e in events]
-        await state.update_data(shown_ids=shown_ids, last_has_more=has_more)
+        # Persist full candidate pool so "Показати ще" can rerank without re-fetching
+        all_candidates_dicts = [dataclasses.asdict(c) for c in candidates]
+        await state.update_data(
+            shown_ids=shown_ids,
+            last_has_more=has_more,
+            all_candidates=all_candidates_dicts,
+        )
 
     except Exception as e:
         search_error = True
@@ -533,8 +540,8 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
 @router.callback_query(F.data == "more_results")
 async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMContext):
     data = await state.get_data()
-    offset = data.get("last_offset", 0) + PAGE_SIZE
     intent = data.get("last_intent", "service")
+    last_query = data.get("last_query", "")
     event_category = data.get("last_event_category")
     category_names = data.get("last_category_names", [])
     max_price = data.get("last_max_price")
@@ -542,64 +549,96 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     search_text = data.get("last_search_text")
     shown_ids: set = set(data.get("shown_ids", []))
 
+    # Restore candidate pool from state
+    all_candidates_raw: list[dict] = data.get("all_candidates", [])
+    if intent == "event":
+        all_candidates: list = [EventResult(**d) for d in all_candidates_raw]
+    else:
+        all_candidates: list = [ProductResult(**d) for d in all_candidates_raw]
+
     await callback.answer("Шукаю ще...")
 
-    _fetch = PAGE_SIZE * 3  # fetch extra to compensate for duplicates
+    # Filter out already-shown candidates
+    remaining = [c for c in all_candidates if c.id not in shown_ids]
 
-    if intent == "event":
-        if event_category == "кіно":
-            raw = await search_kino_events(
-                limit=_fetch, offset=offset,
-                date_filter=date_filter, search_text=search_text,
-            )
+    # If pool is nearly exhausted, fetch a fresh batch from DB and extend the pool
+    if len(remaining) < PAGE_SIZE * 2:
+        new_offset = len(all_candidates)
+        _fetch = CANDIDATE_FETCH
+        if intent == "event":
+            if event_category == "кіно":
+                new_raw = await search_kino_events(
+                    limit=_fetch, offset=new_offset,
+                    date_filter=date_filter, search_text=search_text,
+                )
+            else:
+                new_raw = await search_karabas_events(
+                    category=event_category, limit=_fetch, offset=new_offset,
+                    date_filter=date_filter, search_text=search_text,
+                )
         else:
-            raw = await search_karabas_events(
-                category=event_category, limit=_fetch, offset=offset,
-                date_filter=date_filter, search_text=search_text,
+            new_raw = await search_products(
+                category_names=category_names or None,
+                max_price=max_price,
+                search_text=search_text,
+                limit=_fetch,
+                offset=new_offset,
             )
-        filtered = [e for e in raw if e.id not in shown_ids]
-        has_more = len(filtered) > PAGE_SIZE
-        results = filtered[:PAGE_SIZE]
-        products, events = [], results
-    else:
-        raw = await search_products(
-            category_names=category_names or None,
-            max_price=max_price,
-            search_text=search_text,
-            limit=_fetch,
-            offset=offset,
-        )
-        filtered = [p for p in raw if p.id not in shown_ids]
-        has_more = len(filtered) > PAGE_SIZE
-        products = filtered[:PAGE_SIZE]
-        events = []
+        existing_ids = {c.id for c in all_candidates}
+        new_unique = [c for c in new_raw if c.id not in existing_ids]
+        all_candidates = all_candidates + new_unique
+        remaining = [c for c in all_candidates if c.id not in shown_ids]
 
-    # Save newly shown IDs
-    new_ids = [p.id for p in products] + [e.id for e in events]
-    shown_ids.update(new_ids)
-    await state.update_data(last_offset=offset, shown_ids=list(shown_ids))
-
-    if not products and not events:
+    if not remaining:
         await callback.message.answer(
             "Більше варіантів не знайдено. Спробуй змінити запит.",
             reply_markup=results_keyboard(has_more=False),
         )
         return
 
+    # AI rerank the remaining pool → pick best PAGE_SIZE with reasons
+    rr = await rerank_and_explain(last_query, remaining, top_n=PAGE_SIZE)
+    id_map = {c.id: c for c in remaining}
+    results = [id_map[i] for i in rr.top_ids if i in id_map]
+    if not results:
+        results = remaining[:PAGE_SIZE]
+
+    # Determine has_more after this batch
+    shown_after = shown_ids | {r.id for r in results}
+    still_remaining = [c for c in all_candidates if c.id not in shown_after]
+    has_more = len(still_remaining) > 0
+
+    # Persist updated pool and shown IDs
+    await state.update_data(
+        shown_ids=list(shown_after),
+        all_candidates=[dataclasses.asdict(c) for c in all_candidates],
+    )
+
     uid = callback.from_user.id if callback.from_user else None
 
-    if products:
-        for i, p in enumerate(products, 1):
-            is_last = i == len(products)
-            more = results_keyboard(has_more=has_more) if is_last else None
-            markup = _product_contact_keyboard(p, more)
-            await _send_product_card(callback.message, bot, p, i, reply_markup=markup, user_id=uid)
-    elif events:
-        for i, e in enumerate(events, 1):
-            is_last = i == len(events)
+    # Send AI intro for this batch
+    if rr.intro:
+        try:
+            await callback.message.answer(rr.intro)
+        except Exception:
+            pass
+
+    if intent == "event":
+        for i, e in enumerate(results, 1):
+            is_last = i == len(results)
             more = results_keyboard(has_more=has_more) if is_last else None
             markup = _card_keyboard(e.source_url, "🔗 Детальніше", more)
-            await _send_event_card(callback.message, bot, e, i, reply_markup=markup, user_id=uid)
+            reason = rr.reasons.get(e.id, "")
+            await _send_event_card(callback.message, bot, e, i, reply_markup=markup,
+                                   user_id=uid, reason=reason)
+    else:
+        for i, p in enumerate(results, 1):
+            is_last = i == len(results)
+            more = results_keyboard(has_more=has_more) if is_last else None
+            markup = _product_contact_keyboard(p, more)
+            reason = rr.reasons.get(p.id, "")
+            await _send_product_card(callback.message, bot, p, i, reply_markup=markup,
+                                     user_id=uid, reason=reason)
 
 
 # ── Clarification: DATE (calendar) ─────────────────────────────────────────
