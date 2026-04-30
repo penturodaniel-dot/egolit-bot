@@ -437,13 +437,23 @@ event_category (тільки для intent=event)
   (інакше AI встановлює `event_category` → фільтрує тільки одну категорію → мало результатів)
 
 ### Seed data (наповнення бази)
-- `scrapers/seed.py` → `seed_karabas_events(limit=50)` + `seed_egolist_performers(limit=50)`
-- Запускаються через адмін-панель: Афіша → кнопка "Seed з Karabas", Виконавці → "Завантажити з Egolist"
-- **Karabas seed — upsert логіка**: нові події вставляються, існуючі (по `source_url`) оновлюються
+- `scrapers/seed.py` → `seed_karabas_events(limit=50)` + `seed_egolist_performers(per_category=10)`
+- Запускаються через адмін-панель: Афіша → кнопка "Seed з Karabas", Виконавці → "🎤 Seed з Egolist"
+
+#### Karabas seed
+- **Upsert логіка**: нові події вставляються, існуючі (по `source_url`) оновлюються
   - Оновлює: `title`, `date`, `time`, `description` (тільки якщо було порожнє), `price`, `venue_name`, `image_url`
   - Повертає `{ inserted, updated, skipped, total_parsed }`
 - ⚠️ **Karabas не дає описів** у JSON-LD — поле `description` завжди порожнє. Описи треба вводити вручну через ✏️
 - Всі події (включно з `source='karabas'`) мають кнопку ✏️ редагування в адмін-панелі
+
+#### Egolist performers seed
+- **30 категорій**, `per_category=10` виконавців на категорію (максимум ~300 всього)
+- **Upsert**: існуючі оновлюються (категорія, ціна, контакти, фото), опис зберігається якщо вже вписаний вручну
+- **Прогрес-бар**: `SeedProgress` компонент у `Performers.jsx` поллить `/api/seed-egolist-status` кожну секунду → показує поточну категорію + % + підсумок після завершення
+- **⚠️ Відома проблема**: Egolist API ігнорує параметр `city_slug=dnipro` — повертає виконавців з усіх міст. Фільтрація по `DNIPRO_CITY_SLUGS` відбувається на клієнті. Через це реальних дніпровських виконавців в базі API небагато (~21 знайдено після обходу 30 категорій × 10 сторінок). Додаткові виконавці додаються **вручну** через адмін-панель.
+- **`progress_callback`**: async callable `(idx, total, cat_name)` — викликається перед кожною категорією, оновлює `_egolist_seed_status` в `admin/main.py`
+- **GET `/api/seed-egolist-status`**: повертає `{running, current, total, current_cat, inserted, updated, done, error}`
 
 ### CRM чат — відображення карток (фото)
 - Бот зберігає карти виконавців/подій у `chat_messages` з `msg_type='photo'` і `media_url=<url>`
@@ -614,6 +624,8 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 - **Бот відповідає "менеджер недоступний" після повернення в AI** — `api_set_status("ai")` не видаляв запис з `human_sessions`. `IsHumanMode` фільтр продовжував перехоплювати. Виправлено: `DELETE FROM human_sessions WHERE user_id=$1` в `api_set_status`
 - **Клієнт виходить з чату — менеджер не бачить у CRM** — тепер `callback_end_chat` / `user_end_chat` зберігають системне повідомлення `"🚪 Клієнт завершив чат з менеджером"` + надсилають форматоване Telegram-повідомлення менеджеру
 - **Karabas-події не можна редагувати** — кнопка ✏️ була захована для `source='karabas'`. Виправлено: всі події редагуються незалежно від джерела
+- **Egolist seed показував лише ~21 виконавця** — API ігнорує `city_slug`, повертає всі міста. Код тепер пагінує до 10 сторінок × 50 записів на категорію, фільтрує по `DNIPRO_CITY_SLUGS`. Реальне обмеження — мало дніпровських виконавців в Egolist API.
+- **Seed кнопка не показувала прогрес** — фонова задача повертала одразу. Виправлено: `SeedProgress` компонент + `/api/seed-egolist-status` endpoint + поллінг кожну секунду.
 
 ## ТЗ completion status
 | Feature | Status |
@@ -653,3 +665,5 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 | All events editable in admin regardless of source | ✅ |
 | AI reranking — semantic match via full descriptions (rerank.py) | ✅ |
 | Show More — AI reranking + reasons + no duplicates across pages | ✅ |
+| Egolist seed — progress bar with live polling (SeedProgress) | ✅ |
+| Egolist seed — upsert (updates existing performers on re-seed) | ✅ |
