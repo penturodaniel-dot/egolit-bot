@@ -539,6 +539,9 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
 
 @router.callback_query(F.data == "more_results")
 async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    import logging as _log
+    _logger = _log.getLogger(__name__)
+
     data = await state.get_data()
     intent = data.get("last_intent", "service")
     last_query = data.get("last_query", "")
@@ -548,6 +551,9 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
     date_filter = data.get("last_date_filter")
     search_text = data.get("last_search_text")
     shown_ids: set = set(data.get("shown_ids", []))
+    _logger.info("MORE | intent=%s query=%r shown=%s pool=%d",
+                 intent, last_query, len(shown_ids),
+                 len(data.get("all_candidates", [])))
 
     # Restore candidate pool from state
     all_candidates_raw: list[dict] = data.get("all_candidates", [])
@@ -557,14 +563,17 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         all_candidates: list = [ProductResult(**d) for d in all_candidates_raw]
 
     await callback.answer("Шукаю ще...")
+    thinking_msg = await callback.message.answer("🔍 Підбираю найкращі варіанти...")
 
     # Filter out already-shown candidates
     remaining = [c for c in all_candidates if c.id not in shown_ids]
+    _logger.info("MORE | remaining after shown filter: %d", len(remaining))
 
     # If pool is nearly exhausted, fetch a fresh batch from DB and extend the pool
     if len(remaining) < PAGE_SIZE * 2:
         new_offset = len(all_candidates)
         _fetch = CANDIDATE_FETCH
+        _logger.info("MORE | pool low, fetching from DB at offset=%d", new_offset)
         if intent == "event":
             if event_category == "кіно":
                 new_raw = await search_kino_events(
@@ -588,8 +597,13 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         new_unique = [c for c in new_raw if c.id not in existing_ids]
         all_candidates = all_candidates + new_unique
         remaining = [c for c in all_candidates if c.id not in shown_ids]
+        _logger.info("MORE | after DB extend: pool=%d remaining=%d", len(all_candidates), len(remaining))
 
     if not remaining:
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
         await callback.message.answer(
             "Більше варіантів не знайдено. Спробуй змінити запит.",
             reply_markup=results_keyboard(has_more=False),
@@ -597,7 +611,10 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
         return
 
     # AI rerank the remaining pool → pick best PAGE_SIZE with reasons
+    _logger.info("MORE | calling rerank_and_explain: query=%r candidates=%d", last_query, len(remaining))
     rr = await rerank_and_explain(last_query, remaining, top_n=PAGE_SIZE)
+    _logger.info("MORE | rerank result: top_ids=%s reasons_count=%d intro=%r",
+                 rr.top_ids, len(rr.reasons), rr.intro)
     id_map = {c.id: c for c in remaining}
     results = [id_map[i] for i in rr.top_ids if i in id_map]
     if not results:
@@ -616,12 +633,14 @@ async def callback_more_results(callback: CallbackQuery, bot: Bot, state: FSMCon
 
     uid = callback.from_user.id if callback.from_user else None
 
-    # Send AI intro for this batch
-    if rr.intro:
-        try:
-            await callback.message.answer(rr.intro)
-        except Exception:
-            pass
+    # Replace thinking message with AI intro (or delete it)
+    try:
+        if rr.intro:
+            await thinking_msg.edit_text(rr.intro)
+        else:
+            await thinking_msg.delete()
+    except Exception:
+        pass
 
     if intent == "event":
         for i, e in enumerate(results, 1):
