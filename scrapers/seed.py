@@ -296,37 +296,52 @@ async def seed_egolist_performers(
                 logger.warning("Egolist seed: no UUID for category %r", cat_name)
                 continue
             try:
-                resp = await client.get(
-                    f"{EGOLIST_BASE}/products/by-subcategory",
-                    params={"category_id": uuid, "city_slug": "dnipro",
-                            "page": 1, "per_page": per_category * 2},
-                )
-                if resp.status_code != 200:
-                    logger.warning("Egolist API [%s] HTTP %s", cat_name, resp.status_code)
-                    continue
-
-                items = _extract_list(resp.json())
-                products = _parse_products(items)
-                logger.info("Egolist [%s] got %d products (want %d)", cat_name, len(products), per_category)
-
+                # API ignores city_slug — paginate until we collect per_category Dnipro items
                 count = 0
-                for p in products:
-                    if count >= per_category or len(collected) >= total_limit:
+                page = 1
+                per_page = 50  # fetch large batches to compensate for city filtering
+                max_pages = 10  # safety cap
+                while count < per_category and page <= max_pages:
+                    resp = await client.get(
+                        f"{EGOLIST_BASE}/products/by-subcategory",
+                        params={"category_id": uuid, "city_slug": "dnipro",
+                                "page": page, "per_page": per_page},
+                    )
+                    if resp.status_code != 200:
+                        logger.warning("Egolist API [%s] p%d HTTP %s", cat_name, page, resp.status_code)
                         break
-                    collected.append({
-                        "name":        p.name,
-                        "category":    cat_name,
-                        "description": p.description or "",
-                        "city":        p.city or "Дніпро",
-                        "price_from":  p.price,
-                        "phone":       p.phone,
-                        "instagram":   p.instagram,
-                        "telegram":    p.telegram_contact,
-                        "website":     p.website or p.product_url,
-                        "photo_url":   p.photo_url,
-                        "is_featured": p.is_top,
-                    })
-                    count += 1
+
+                    items = _extract_list(resp.json())
+                    if not items:
+                        break  # no more pages
+
+                    products = _parse_products(items)
+                    logger.info("Egolist [%s] p%d: %d raw → %d Dnipro (need %d more)",
+                                cat_name, page, len(items), len(products), per_category - count)
+
+                    for p in products:
+                        if count >= per_category or len(collected) >= total_limit:
+                            break
+                        collected.append({
+                            "name":        p.name,
+                            "category":    cat_name,
+                            "description": p.description or "",
+                            "city":        p.city or "Дніпро",
+                            "price_from":  p.price,
+                            "phone":       p.phone,
+                            "instagram":   p.instagram,
+                            "telegram":    p.telegram_contact,
+                            "website":     p.website or p.product_url,
+                            "photo_url":   p.photo_url,
+                            "is_featured": p.is_top,
+                        })
+                        count += 1
+
+                    if len(items) < per_page:
+                        break  # last page reached
+                    page += 1
+
+                logger.info("Egolist [%s] collected %d Dnipro performers", cat_name, count)
 
             except Exception as e:
                 logger.error("Egolist seed [%s] error: %s", cat_name, e)
