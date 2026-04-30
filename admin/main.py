@@ -682,7 +682,7 @@ async def api_seed_karabas(request: Request, background_tasks: BackgroundTasks):
 
 async def _run_seed_karabas_bg():
     try:
-        result = await seed_karabas_events(limit=50)
+        result = await seed_karabas_events()
         _sched_logger.info("Karabas seed done: %s", result)
     except Exception:
         _sched_logger.exception("Karabas seed failed")

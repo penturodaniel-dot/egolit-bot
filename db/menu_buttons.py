@@ -44,7 +44,7 @@ _DEFAULT_BUTTONS = [
     (None, "Знайти виконавця",        "🎤", "ai_search",
      "Знайди виконавця або артиста для свята у Дніпрі", 6),
     (None, "Свій запит",              "✍️", "custom_query", None, 7),
-    (None, "Поговорити з менеджером", "📞", "manager",      None, 8),
+    (None, "Чат з менеджером",        "📞", "manager",      None, 8),
 ]
 
 # Prompts to migrate on existing DBs (label → new_prompt).
@@ -102,6 +102,11 @@ async def init_menu_buttons() -> None:
                 UPDATE bot_menu_buttons SET ai_prompt = $1
                 WHERE label = $2 AND action_type = 'ai_search'
             """, new_prompt, label)
+        # Migrate label renames
+        await pool.execute("""
+            UPDATE bot_menu_buttons SET label = 'Чат з менеджером'
+            WHERE label = 'Поговорити з менеджером' AND action_type = 'manager'
+        """)
 
 
 # ── Queries ───────────────────────────────────────────────────────────────

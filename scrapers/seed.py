@@ -46,8 +46,8 @@ KARABAS_CATEGORIES = [
 ]
 
 
-async def seed_karabas_events(limit: int = 50) -> dict:
-    """Scrape Karabas Dnipro events and insert up to `limit` into events table."""
+async def seed_karabas_events(limit: int = 9999) -> dict:
+    """Scrape Karabas Dnipro events and insert all available events into events table."""
     pool = await get_pool()
     collected: list[dict] = []
     today = datetime.now().date()
@@ -56,8 +56,6 @@ async def seed_karabas_events(limit: int = 50) -> dict:
         headers=KARABAS_HEADERS, timeout=30, follow_redirects=True
     ) as client:
         for slug, category_ua in KARABAS_CATEGORIES:
-            if len(collected) >= limit:
-                break
             try:
                 url = f"{KARABAS_BASE}/{slug}/"
                 resp = await client.get(url)
@@ -73,8 +71,6 @@ async def seed_karabas_events(limit: int = 50) -> dict:
                 logger.info("Karabas [%s] found %d events", slug, len(events))
 
                 for evt in events:
-                    if len(collected) >= limit:
-                        break
                     parsed = _karabas_parse(evt, category_ua, today)
                     if parsed:
                         collected.append(parsed)
