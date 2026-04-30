@@ -47,7 +47,11 @@ KARABAS_CATEGORIES = [
 
 
 async def seed_karabas_events(limit: int = 9999, progress_callback=None) -> dict:
-    """Scrape Karabas Dnipro events and insert all available events into events table."""
+    """Scrape ALL pages of Karabas Dnipro events and insert into events table.
+
+    Pagination: ?p=N  — stops when a page returns only URLs already seen
+    (site loops back to same data instead of returning empty page).
+    """
     pool = await get_pool()
     collected: list[dict] = []
     today = datetime.now().date()
@@ -62,23 +66,55 @@ async def seed_karabas_events(limit: int = 9999, progress_callback=None) -> dict
                 except Exception:
                     pass
             try:
-                url = f"{KARABAS_BASE}/{slug}/"
-                resp = await client.get(url)
-                if resp.status_code != 200:
-                    logger.warning("Karabas [%s] HTTP %s", slug, resp.status_code)
-                    continue
+                seen_urls: set[str] = set()  # dedup across pages for this category
+                cat_total = 0
+                max_pages = 50  # safety cap — 50 × 20 = 1000 events per category
 
-                soup = BeautifulSoup(resp.text, "html.parser")
-                events = _karabas_extract_jsonld(soup)
-                if not events:
-                    events = _karabas_extract_html(soup)
+                for page in range(1, max_pages + 1):
+                    url = (
+                        f"{KARABAS_BASE}/{slug}/"
+                        if page == 1
+                        else f"{KARABAS_BASE}/{slug}/?p={page}"
+                    )
+                    resp = await client.get(url)
+                    if resp.status_code != 200:
+                        logger.warning("Karabas [%s] p%d HTTP %s", slug, page, resp.status_code)
+                        break
 
-                logger.info("Karabas [%s] found %d events", slug, len(events))
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    events = _karabas_extract_jsonld(soup)
+                    if not events:
+                        events = _karabas_extract_html(soup)
 
-                for evt in events:
-                    parsed = _karabas_parse(evt, category_ua, today)
-                    if parsed:
-                        collected.append(parsed)
+                    # Detect loop-back: all URLs on this page already seen → stop
+                    page_urls = {(e.get("url") or e.get("name", "")) for e in events}
+                    new_urls = page_urls - seen_urls
+                    if not new_urls:
+                        logger.info(
+                            "Karabas [%s] p%d: all %d events already seen — stopping",
+                            slug, page, len(events),
+                        )
+                        break
+
+                    seen_urls |= page_urls
+                    new_count = 0
+                    for evt in events:
+                        evt_key = evt.get("url") or evt.get("name", "")
+                        if evt_key not in new_urls:
+                            continue  # skip duplicates within this page
+                        parsed = _karabas_parse(evt, category_ua, today)
+                        if parsed:
+                            collected.append(parsed)
+                            new_count += 1
+
+                    cat_total += new_count
+                    logger.info(
+                        "Karabas [%s] p%d: %d new events (cat total: %d)",
+                        slug, page, new_count, cat_total,
+                    )
+
+                    if not events:
+                        break  # truly empty page
 
             except Exception as e:
                 logger.error("Karabas [%s] error: %s", slug, e)
