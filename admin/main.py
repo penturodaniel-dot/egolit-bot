@@ -40,7 +40,7 @@ from db.chat import (
 )
 from scrapers.egolist import scrape_all as egolist_scrape_all, init_egolist_products
 from scrapers.egolist_events import scrape_all as events_scrape_all, init_egolist_events
-from scrapers.seed import seed_karabas_events, seed_egolist_performers
+from scrapers.seed import seed_karabas_events, seed_egolist_performers, SEED_CATEGORIES
 from db.performers import (
     init_performers_table,
     get_all_performers, get_performer, create_performer, update_performer,
@@ -688,20 +688,54 @@ async def _run_seed_karabas_bg():
         _sched_logger.exception("Karabas seed failed")
 
 
+# ── Egolist seed progress state ──────────────────────────────────────────────
+_egolist_seed_status: dict = {
+    "running": False, "current": 0, "total": 0, "current_cat": "",
+    "inserted": 0, "updated": 0, "total_parsed": 0, "done": False, "error": None,
+}
+
+
 @app.post("/api/seed-egolist-performers")
 async def api_seed_egolist_performers(request: Request, background_tasks: BackgroundTasks):
     """Seed up to 10 performers per category from Egolist API → performers table."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if _egolist_seed_status.get("running"):
+        return JSONResponse({"ok": False, "status": "already_running"})
     background_tasks.add_task(_run_seed_egolist_bg)
     return JSONResponse({"ok": True, "status": "started"})
 
 
+@app.get("/api/seed-egolist-status")
+async def api_seed_egolist_status(request: Request):
+    """Return current seed progress."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    return JSONResponse(_egolist_seed_status)
+
+
 async def _run_seed_egolist_bg():
+    global _egolist_seed_status
+    _egolist_seed_status = {
+        "running": True, "current": 0, "total": len(SEED_CATEGORIES),
+        "current_cat": "", "inserted": 0, "updated": 0,
+        "total_parsed": 0, "done": False, "error": None,
+    }
     try:
-        result = await seed_egolist_performers(per_category=10)
+        async def _on_progress(idx: int, total: int, cat_name: str):
+            _egolist_seed_status.update({"current": idx + 1, "current_cat": cat_name})
+
+        result = await seed_egolist_performers(per_category=10, progress_callback=_on_progress)
+        _egolist_seed_status.update({
+            "running": False, "done": True,
+            "current": len(SEED_CATEGORIES),
+            "inserted": result["inserted"],
+            "updated": result["updated"],
+            "total_parsed": result["total_parsed"],
+        })
         _sched_logger.info("Egolist performers seed done: %s", result)
-    except Exception:
+    except Exception as e:
+        _egolist_seed_status.update({"running": False, "error": str(e)})
         _sched_logger.exception("Egolist performers seed failed")
 
 

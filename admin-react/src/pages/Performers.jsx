@@ -277,20 +277,84 @@ function PerformerRow({ item, onEdit, onDelete, onToggle }) {
   );
 }
 
-function SeedBtn({ onSeed }) {
-  const [state, setState] = useState('idle');
+function SeedProgress({ onSeed }) {
+  const [status, setStatus] = useState(null); // null = idle
+  const pollRef = useRef(null);
+
+  const stopPoll = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+
+  const poll = async (reloadOnDone) => {
+    try {
+      const r = await fetch('/api/seed-egolist-status', { credentials: 'include' });
+      const s = await r.json();
+      setStatus(s);
+      if (!s.running) {
+        stopPoll();
+        if (s.done && reloadOnDone) { setTimeout(onSeed, 800); }
+      }
+    } catch { stopPoll(); }
+  };
+
   const run = async () => {
-    if (state === 'running') return;
-    setState('running');
+    if (status?.running) return;
     try {
       await fetch('/api/seed-egolist-performers', { method: 'POST', credentials: 'include' });
-      setState('done');
-      setTimeout(() => { setState('idle'); onSeed(); }, 2000);
-    } catch { setState('idle'); }
+      setStatus({ running: true, current: 0, total: 30, current_cat: '', done: false, error: null });
+      stopPoll();
+      pollRef.current = setInterval(() => poll(true), 1000);
+    } catch { }
   };
+
+  // On mount: check if a seed is already running
+  useEffect(() => {
+    poll(false);
+    return stopPoll;
+  }, []);
+
+  const pct = status?.total ? Math.round((status.current / status.total) * 100) : 0;
+  const isRunning = status?.running;
+  const isDone = status?.done;
+  const hasError = status?.error;
+
+  if (isRunning) {
+    return (
+      <div className="seed-progress-wrap">
+        <div className="seed-progress-header">
+          <span className="seed-spinner" />
+          <span className="seed-progress-label">
+            {status.current_cat ? `Категорія: ${status.current_cat}` : 'Підготовка...'}
+          </span>
+          <span className="seed-progress-pct">{pct}%</span>
+        </div>
+        <div className="seed-progress-bar-bg">
+          <div className="seed-progress-bar-fill" style={{ width: `${pct}%` }} />
+        </div>
+        <div className="seed-progress-sub">{status.current} / {status.total} категорій</div>
+      </div>
+    );
+  }
+
+  if (isDone) {
+    return (
+      <div className="seed-progress-wrap seed-done">
+        <span>✅ Готово: <b>+{status.inserted}</b> нових, <b>{status.updated}</b> оновлено</span>
+        <button className="seed-reset-btn" onClick={() => setStatus(null)}>✕</button>
+      </div>
+    );
+  }
+
+  if (hasError) {
+    return (
+      <div className="seed-progress-wrap seed-error">
+        <span>⚠️ Помилка: {status.error}</span>
+        <button className="seed-reset-btn" onClick={() => setStatus(null)}>✕</button>
+      </div>
+    );
+  }
+
   return (
-    <button className="pf-btn-seed" onClick={run} disabled={state === 'running'} title="Завантажити до 50 виконавців з api.egolist.ua">
-      {state === 'running' ? '⏳ Завантаження...' : state === 'done' ? '✅ Готово' : '🎤 Seed з Egolist'}
+    <button className="pf-btn-seed" onClick={run} title="Завантажити до 10 виконавців на категорію (30 кат.) з api.egolist.ua">
+      🎤 Seed з Egolist
     </button>
   );
 }
@@ -368,7 +432,7 @@ export default function Performers() {
             <option value="">Всі категорії</option>
             {usedCats.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
-          <SeedBtn onSeed={load} />
+          <SeedProgress onSeed={load} />
           <button className="btn-primary" onClick={() => { setEditItem(null); setModal('add'); }}>
             + Додати виконавця
           </button>
@@ -437,6 +501,33 @@ export default function Performers() {
         }
         .pf-btn-seed:hover:not(:disabled) { background: #f3e8ff; border-color: #d8b4fe; color: #7c3aed; }
         .pf-btn-seed:disabled { opacity: 0.65; cursor: default; }
+
+        /* Seed progress bar */
+        .seed-progress-wrap {
+          display: flex; flex-direction: column; gap: 5px;
+          background: var(--card-bg); border: 1.5px solid var(--border);
+          border-radius: 10px; padding: 8px 12px;
+          min-width: 240px; font-size: 12.5px;
+        }
+        .seed-progress-wrap.seed-done {
+          flex-direction: row; align-items: center; justify-content: space-between;
+          border-color: #bbf7d0; background: #f0fdf4; color: #166534; gap: 10px;
+          padding: 8px 12px; white-space: nowrap;
+        }
+        .seed-progress-wrap.seed-error {
+          flex-direction: row; align-items: center; justify-content: space-between;
+          border-color: #fecaca; background: #fef2f2; color: #dc2626; gap: 10px;
+        }
+        .seed-progress-header { display: flex; align-items: center; gap: 7px; }
+        .seed-progress-label { flex: 1; color: var(--text-secondary); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .seed-progress-pct { font-weight: 700; color: #7c3aed; min-width: 32px; text-align: right; }
+        .seed-progress-bar-bg { height: 6px; background: var(--border); border-radius: 99px; overflow: hidden; }
+        .seed-progress-bar-fill { height: 100%; background: linear-gradient(90deg,#a78bfa,#7c3aed); border-radius: 99px; transition: width 0.4s ease; }
+        .seed-progress-sub { font-size: 11px; color: var(--text-muted); }
+        .seed-reset-btn { background: none; border: none; cursor: pointer; font-size: 14px; color: inherit; opacity: 0.6; padding: 0 2px; line-height: 1; }
+        .seed-reset-btn:hover { opacity: 1; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .seed-spinner { display: inline-block; width: 13px; height: 13px; border: 2px solid #d8b4fe; border-top-color: #7c3aed; border-radius: 50%; animation: spin 0.7s linear infinite; flex-shrink: 0; }
         .pf-search {
           flex: 1; min-width: 200px;
           padding: 9px 14px; border-radius: 10px;

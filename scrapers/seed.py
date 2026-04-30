@@ -264,12 +264,17 @@ SEED_CATEGORIES = [
 EGOLIST_BASE = "https://api.egolist.ua/api"
 
 
-async def seed_egolist_performers(per_category: int = 10, limit: int | None = None) -> dict:
+async def seed_egolist_performers(
+    per_category: int = 10,
+    limit: int | None = None,
+    progress_callback=None,
+) -> dict:
     """Fetch performers from Egolist API — up to per_category items per category.
 
     Args:
         per_category: max items to fetch per category (default 10)
         limit: optional hard cap on total collected (default = per_category * categories)
+        progress_callback: async callable(current_index, total, category_name) called before each category
     """
     pool = await get_pool()
     collected: list[dict] = []
@@ -278,7 +283,12 @@ async def seed_egolist_performers(per_category: int = 10, limit: int | None = No
     async with httpx.AsyncClient(
         headers=EGO_HEADERS, timeout=20, follow_redirects=True
     ) as client:
-        for cat_name in SEED_CATEGORIES:
+        for cat_idx, cat_name in enumerate(SEED_CATEGORIES):
+            if progress_callback:
+                try:
+                    await progress_callback(cat_idx, len(SEED_CATEGORIES), cat_name)
+                except Exception:
+                    pass
             if len(collected) >= total_limit:
                 break
             uuid = CATEGORIES.get(cat_name)
