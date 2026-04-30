@@ -181,8 +181,9 @@ egolist-bot/
 2. `parse_intent()` → AI повертає JSON з `intent`, `category_names`, `event_category`, `search_text`, тощо
 3. Routing:
    - `intent=service` → `search_products()` → шукає в `performers` по category + search_text
-   - `intent=event, event_category=кіно` → `search_kino_events()` → шукає в `events` category ILIKE '%кіно%'
-   - `intent=event, інше` → `search_karabas_events()` → шукає в `events` по category + search_text
+   - `intent=event` + є `search_text` → `search_karabas_events(category=None)` → шукає по всіх категоріях (ігнорує event_category — AI може помилитись з категорією для конкретної назви)
+   - `intent=event` + немає `search_text` + `event_category=кіно` → `search_kino_events()` → category ILIKE '%кіно%'
+   - `intent=event` + немає `search_text` + інше → `search_karabas_events(category=event_category)`
    - `intent=lead` → запускає LeadFlow
    - `intent=other` → `needs_clarification=true` → відповідь з пропозицією звернутись до менеджера
 4. **AI reranking** (`ai/rerank.py`): БД повертає `CANDIDATE_FETCH=15` кандидатів → `rerank_and_explain()` читає повні описи → один LLM-виклик повертає `{top_ids, reasons, intro}` → показуються `PAGE_SIZE=2` найкращих
@@ -435,16 +436,30 @@ event_category (тільки для intent=event)
   → **Рішення**: міняти промпт треба в `_DEFAULT_BUTTONS` + `_PROMPT_MIGRATIONS` у коді, потім деплоїти
 - Кнопки з часовими запитами ("вихідні", "сьогодні") **не повинні мати** назв конкретних категорій в промпті
   (інакше AI встановлює `event_category` → фільтрує тільки одну категорію → мало результатів)
+- **Label migrations**: щоб перейменувати кнопку (label) в уже існуючих БД — додай SQL в `init_menu_buttons()`:
+  ```python
+  await pool.execute("""
+      UPDATE bot_menu_buttons SET label = 'Нова назва'
+      WHERE label = 'Стара назва' AND action_type = 'search'
+  """)
+  ```
+  Наприклад: "Поговорити з менеджером" → "Чат з менеджером" (`action_type='manager'`)
 
 ### Seed data (наповнення бази)
-- `scrapers/seed.py` → `seed_karabas_events(limit=50)` + `seed_egolist_performers(per_category=10)`
-- Запускаються через адмін-панель: Афіша → кнопка "Seed з Karabas", Виконавці → "🎤 Seed з Egolist"
+- `scrapers/seed.py` → `seed_karabas_events()` + `seed_egolist_performers(per_category=10)`
+- Запускаються через адмін-панель: Афіша → "🎟 Seed з Karabas", Виконавці → "🎤 Seed з Egolist"
+- Обидві кнопки показують **прогрес-бар** з поточною категорією + % + підсумком після завершення
 
 #### Karabas seed
+- **Пагінація**: `?p=N` — перебирає всі сторінки кожної категорії. Зупиняється коли сторінка повертає URL вже бачених подій (сайт зациклює дані замість порожньої сторінки). Safety cap: 50 сторінок на категорію.
 - **Upsert логіка**: нові події вставляються, існуючі (по `source_url`) оновлюються
   - Оновлює: `title`, `date`, `time`, `description` (тільки якщо було порожнє), `price`, `venue_name`, `image_url`
   - Повертає `{ inserted, updated, skipped, total_parsed }`
+- **Прогрес-бар**: `SeedProgress` компонент у `Events.jsx` поллить `/api/seed-karabas-status` кожну секунду
+- **GET `/api/seed-karabas-status`**: повертає `{running, current, total, current_cat, inserted, updated, done, error}`
+- **Захист від подвійного запуску**: `already_running` guard в `POST /api/seed-karabas`
 - ⚠️ **Karabas не дає описів** у JSON-LD — поле `description` завжди порожнє. Описи треба вводити вручну через ✏️
+- ⚠️ **Реальний обсяг**: на dnipro.karabas.com зараз ~61 актуальна подія (всі на першій сторінці кожної категорії). Karabas повертає однакові дані на page 2+.
 - Всі події (включно з `source='karabas'`) мають кнопку ✏️ редагування в адмін-панелі
 
 #### Egolist performers seed
@@ -452,7 +467,7 @@ event_category (тільки для intent=event)
 - **Upsert**: існуючі оновлюються (категорія, ціна, контакти, фото), опис зберігається якщо вже вписаний вручну
 - **Прогрес-бар**: `SeedProgress` компонент у `Performers.jsx` поллить `/api/seed-egolist-status` кожну секунду → показує поточну категорію + % + підсумок після завершення
 - **⚠️ Відома проблема**: Egolist API ігнорує параметр `city_slug=dnipro` — повертає виконавців з усіх міст. Фільтрація по `DNIPRO_CITY_SLUGS` відбувається на клієнті. Через це реальних дніпровських виконавців в базі API небагато (~21 знайдено після обходу 30 категорій × 10 сторінок). Додаткові виконавці додаються **вручну** через адмін-панель.
-- **`progress_callback`**: async callable `(idx, total, cat_name)` — викликається перед кожною категорією, оновлює `_egolist_seed_status` в `admin/main.py`
+- **`progress_callback`**: async callable `(idx, total, cat_name)` — викликається перед кожною категорією, оновлює `_egolist_seed_status` / `_karabas_seed_status` в `admin/main.py`
 - **GET `/api/seed-egolist-status`**: повертає `{running, current, total, current_cat, inserted, updated, done, error}`
 
 ### CRM чат — відображення карток (фото)
@@ -511,6 +526,7 @@ event_category (тільки для intent=event)
 - **ChatPersistenceMiddleware** — зберігає кожне вхідне повідомлення автоматично
 - **Human mode check** — `IsHumanMode` читає `human_sessions` (НЕ `chat_sessions.status`!)
 - **Lead flow**: name → phone → category → budget → date → people → details
+- **Lead flow keyboard**: при старті форми (`start_lead_flow`) надсилається `ReplyKeyboardRemove()` — прибирає sticky Telegram-клавіатуру. Головне меню відновлюється автоматично при відправці або скасуванні заявки через `main_menu_keyboard()`. `InlineKeyboardMarkup` (кнопки скасування) не впливає на sticky ReplyKeyboard — тільки явний `ReplyKeyboardRemove` прибирає її.
 - **Manager online/offline**: в `admin_settings.manager_online`
 
 ## Admin panel — JSON API (admin/main.py)
@@ -545,6 +561,7 @@ event_category (тільки для intent=event)
 | `POST /api/events/{id}/toggle` | Toggle published |
 | `POST /api/upload-image` | Upload photo → save to /uploads/, return URL |
 | `POST /api/seed-karabas` | Seed events from Karabas (background) |
+| `GET /api/seed-karabas-status` | Karabas seed progress `{running, current, total, current_cat, inserted, updated, done, error}` |
 | `POST /api/seed-egolist-performers` | Seed performers from Egolist (background) |
 
 ## chat_messages field names (important!)
@@ -626,6 +643,9 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 - **Karabas-події не можна редагувати** — кнопка ✏️ була захована для `source='karabas'`. Виправлено: всі події редагуються незалежно від джерела
 - **Egolist seed показував лише ~21 виконавця** — API ігнорує `city_slug`, повертає всі міста. Код тепер пагінує до 10 сторінок × 50 записів на категорію, фільтрує по `DNIPRO_CITY_SLUGS`. Реальне обмеження — мало дніпровських виконавців в Egolist API.
 - **Seed кнопка не показувала прогрес** — фонова задача повертала одразу. Виправлено: `SeedProgress` компонент + `/api/seed-egolist-status` endpoint + поллінг кожну секунду.
+- **Internal Server Error при збереженні події/виконавця** — `body.get("tags", "").strip()` не спрацьовує коли React надсилає `null` (default `""` діє тільки якщо ключ відсутній, але `null` — це значення). Виправлено у всіх 4 CRUD-ендпоїнтах: `(body.get("tags") or "").strip()`.
+- **Пошук не знаходив вручну доданих подій (Килхаус, Майкл)** — AI класифікував запит як `event_category='концерти'`, але події збережені як `category='кіно'`. Категорія не збігалась → 0 результатів. Виправлено: якщо є `search_text` → `category=None` (пошук по всіх категоріях), `event_category` ігнорується.
+- **Sticky Telegram-клавіатура не зникала під час lead-форми** — `InlineKeyboardMarkup` не прибирає `ReplyKeyboard`. Виправлено: `start_lead_flow()` надсилає `ReplyKeyboardRemove()` перед першим питанням форми.
 
 ## ТЗ completion status
 | Feature | Status |
@@ -667,3 +687,9 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 | Show More — AI reranking + reasons + no duplicates across pages | ✅ |
 | Egolist seed — progress bar with live polling (SeedProgress) | ✅ |
 | Egolist seed — upsert (updates existing performers on re-seed) | ✅ |
+| Karabas seed — progress bar with live polling (SeedProgress) | ✅ |
+| Karabas seed — full pagination with loop-back detection (?p=N) | ✅ |
+| Event search by name — searches all categories (ignores event_category) | ✅ |
+| Lead form — hides sticky Telegram keyboard (ReplyKeyboardRemove) | ✅ |
+| Button rename "Поговорити з менеджером" → "Чат з менеджером" + DB migration | ✅ |
+| Null-safe CRUD: (body.get("field") or "").strip() in all 4 endpoints | ✅ |
