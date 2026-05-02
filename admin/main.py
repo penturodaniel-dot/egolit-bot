@@ -730,12 +730,23 @@ _egolist_seed_status: dict = {
 
 @app.post("/api/seed-egolist-performers")
 async def api_seed_egolist_performers(request: Request, background_tasks: BackgroundTasks):
-    """Seed up to 10 performers per category from Egolist API → performers table."""
+    """Seed up to 10 performers per category from Egolist API (Dnipro only) → performers table."""
     if not request.session.get("authenticated"):
         return JSONResponse({"error": "not authenticated"}, status_code=401)
     if _egolist_seed_status.get("running"):
         return JSONResponse({"ok": False, "status": "already_running"})
-    background_tasks.add_task(_run_seed_egolist_bg)
+    background_tasks.add_task(_run_seed_egolist_bg, all_cities=False)
+    return JSONResponse({"ok": True, "status": "started"})
+
+
+@app.post("/api/seed-egolist-all-cities")
+async def api_seed_egolist_all_cities(request: Request, background_tasks: BackgroundTasks):
+    """Seed ALL performers from ALL cities from Egolist API → performers table."""
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    if _egolist_seed_status.get("running"):
+        return JSONResponse({"ok": False, "status": "already_running"})
+    background_tasks.add_task(_run_seed_egolist_bg, all_cities=True)
     return JSONResponse({"ok": True, "status": "started"})
 
 
@@ -747,18 +758,24 @@ async def api_seed_egolist_status(request: Request):
     return JSONResponse(_egolist_seed_status)
 
 
-async def _run_seed_egolist_bg():
+async def _run_seed_egolist_bg(all_cities: bool = False):
     global _egolist_seed_status
     _egolist_seed_status = {
         "running": True, "current": 0, "total": len(SEED_CATEGORIES),
         "current_cat": "", "inserted": 0, "updated": 0,
         "total_parsed": 0, "done": False, "error": None,
+        "all_cities": all_cities,
     }
     try:
         async def _on_progress(idx: int, total: int, cat_name: str):
             _egolist_seed_status.update({"current": idx + 1, "current_cat": cat_name})
 
-        result = await seed_egolist_performers(per_category=10, progress_callback=_on_progress)
+        if all_cities:
+            result = await seed_egolist_performers(
+                progress_callback=_on_progress, all_cities=True,
+            )
+        else:
+            result = await seed_egolist_performers(per_category=10, progress_callback=_on_progress)
         _egolist_seed_status.update({
             "running": False, "done": True,
             "current": len(SEED_CATEGORIES),

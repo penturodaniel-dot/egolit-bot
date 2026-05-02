@@ -244,7 +244,7 @@ def _extract_list(data) -> list[dict]:
     return []
 
 
-def _parse_products(items: list[dict]) -> list["ProductResult"]:
+def _parse_products(items: list[dict], skip_city_filter: bool = False) -> list["ProductResult"]:
     from db.queries import ProductResult
 
     results = []
@@ -287,7 +287,7 @@ def _parse_products(items: list[dict]) -> list["ProductResult"]:
             city_slug_val = ""
             city_name = "Дніпро"
         # Пропускаємо продукти з іншого міста (не Дніпро і не порожній slug)
-        if city_slug_val and city_slug_val not in DNIPRO_CITY_SLUGS:
+        if not skip_city_filter and city_slug_val and city_slug_val not in DNIPRO_CITY_SLUGS:
             continue
 
         # Контакти — є на рівні продукту і в об'єкті user

@@ -305,17 +305,21 @@ async def seed_egolist_performers(
     per_category: int = 10,
     limit: int | None = None,
     progress_callback=None,
+    all_cities: bool = False,
 ) -> dict:
     """Fetch performers from Egolist API — up to per_category items per category.
 
     Args:
-        per_category: max items to fetch per category (default 10)
-        limit: optional hard cap on total collected (default = per_category * categories)
+        per_category: max items to fetch per category (default 10; ignored when all_cities=True)
+        limit: optional hard cap on total collected
         progress_callback: async callable(current_index, total, category_name) called before each category
+        all_cities: if True — skip city filter, fetch ALL cities from Egolist (not only Dnipro)
     """
     pool = await get_pool()
     collected: list[dict] = []
-    total_limit = limit or (per_category * len(SEED_CATEGORIES))
+    # When all_cities — fetch everything, no per-category cap
+    effective_per_cat = 9999 if all_cities else per_category
+    total_limit = limit or (effective_per_cat * len(SEED_CATEGORIES))
 
     async with httpx.AsyncClient(
         headers=EGO_HEADERS, timeout=20, follow_redirects=True
@@ -333,16 +337,22 @@ async def seed_egolist_performers(
                 logger.warning("Egolist seed: no UUID for category %r", cat_name)
                 continue
             try:
-                # API ignores city_slug — paginate until we collect per_category Dnipro items
+                # When all_cities=True — fetch without city filter, paginate all pages
                 count = 0
                 page = 1
-                per_page = 50  # fetch large batches to compensate for city filtering
-                max_pages = 10  # safety cap
-                while count < per_category and page <= max_pages:
+                per_page = 50
+                max_pages = 200 if all_cities else 10  # safety cap
+                while count < effective_per_cat and page <= max_pages:
+                    params: dict = {
+                        "category_id": uuid,
+                        "page": page,
+                        "per_page": per_page,
+                    }
+                    if not all_cities:
+                        params["city_slug"] = "dnipro"
                     resp = await client.get(
                         f"{EGOLIST_BASE}/products/by-subcategory",
-                        params={"category_id": uuid, "city_slug": "dnipro",
-                                "page": page, "per_page": per_page},
+                        params=params,
                     )
                     if resp.status_code != 200:
                         logger.warning("Egolist API [%s] p%d HTTP %s", cat_name, page, resp.status_code)
@@ -352,12 +362,15 @@ async def seed_egolist_performers(
                     if not items:
                         break  # no more pages
 
-                    products = _parse_products(items)
-                    logger.info("Egolist [%s] p%d: %d raw → %d Dnipro (need %d more)",
-                                cat_name, page, len(items), len(products), per_category - count)
+                    products = _parse_products(items, skip_city_filter=all_cities)
+                    if all_cities:
+                        logger.info("Egolist [%s] p%d: %d items (all cities)", cat_name, page, len(products))
+                    else:
+                        logger.info("Egolist [%s] p%d: %d raw → %d Dnipro (need %d more)",
+                                    cat_name, page, len(items), len(products), effective_per_cat - count)
 
                     for p in products:
-                        if count >= per_category or len(collected) >= total_limit:
+                        if count >= effective_per_cat or len(collected) >= total_limit:
                             break
                         collected.append({
                             "name":        p.name,
@@ -378,7 +391,7 @@ async def seed_egolist_performers(
                         break  # last page reached
                     page += 1
 
-                logger.info("Egolist [%s] collected %d Dnipro performers", cat_name, count)
+                logger.info("Egolist [%s] collected %d performers (all_cities=%s)", cat_name, count, all_cities)
 
             except Exception as e:
                 logger.error("Egolist seed [%s] error: %s", cat_name, e)

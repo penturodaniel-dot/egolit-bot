@@ -295,10 +295,10 @@ function SeedProgress({ onSeed }) {
     } catch { stopPoll(); }
   };
 
-  const run = async () => {
+  const run = async (endpoint) => {
     if (status?.running) return;
     try {
-      await fetch('/api/seed-egolist-performers', { method: 'POST', credentials: 'include' });
+      await fetch(endpoint, { method: 'POST', credentials: 'include' });
       setStatus({ running: true, current: 0, total: 30, current_cat: '', done: false, error: null });
       stopPoll();
       pollRef.current = setInterval(() => poll(true), 1000);
@@ -322,7 +322,9 @@ function SeedProgress({ onSeed }) {
         <div className="seed-progress-header">
           <span className="seed-spinner" />
           <span className="seed-progress-label">
-            {status.current_cat ? `Категорія: ${status.current_cat}` : 'Підготовка...'}
+            {status.current_cat
+              ? `${status.all_cities ? '🌍' : '🎤'} ${status.current_cat}`
+              : 'Підготовка...'}
           </span>
           <span className="seed-progress-pct">{pct}%</span>
         </div>
@@ -337,7 +339,7 @@ function SeedProgress({ onSeed }) {
   if (isDone) {
     return (
       <div className="seed-progress-wrap seed-done">
-        <span>✅ Готово: <b>+{status.inserted}</b> нових, <b>{status.updated}</b> оновлено</span>
+        <span>✅ Готово: <b>+{status.inserted}</b> нових, <b>{status.updated}</b> оновлено ({status.all_cities ? 'всі міста' : 'Дніпро'})</span>
         <button className="seed-reset-btn" onClick={() => setStatus(null)}>✕</button>
       </div>
     );
@@ -353,9 +355,16 @@ function SeedProgress({ onSeed }) {
   }
 
   return (
-    <button className="pf-btn-seed" onClick={run} title="Завантажити до 10 виконавців на категорію (30 кат.) з api.egolist.ua">
-      🎤 Seed з Egolist
-    </button>
+    <div style={{ display: 'flex', gap: 6 }}>
+      <button className="pf-btn-seed" onClick={() => run('/api/seed-egolist-performers')}
+        title="Завантажити до 10 виконавців на категорію тільки з Дніпра">
+        🎤 Seed Дніпро
+      </button>
+      <button className="pf-btn-seed" onClick={() => run('/api/seed-egolist-all-cities')}
+        title="Завантажити ВСІХ виконавців з УСІХ міст України з api.egolist.ua">
+        🌍 Всі міста
+      </button>
+    </div>
   );
 }
 
