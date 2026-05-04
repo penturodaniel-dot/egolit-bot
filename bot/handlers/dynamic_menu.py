@@ -46,14 +46,28 @@ async def handle_back(message: Message, state: FSMContext):
     if len(stack) <= 1:
         # At level 1 or root — go to main menu
         await state.update_data(menu_stack=[])
-        await message.answer("🏠 Головне меню", reply_markup=main_menu_keyboard())
+        data = await state.get_data()
+        city = data.get("user_city")
+        city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
+        await message.answer(
+            f"🏠 Головне меню{city_line}\n\nОбери категорію:",
+            reply_markup=main_menu_keyboard(),
+            parse_mode="HTML",
+        )
     else:
         # Pop current level, go to parent's parent
         stack = stack[:-1]
         await state.update_data(menu_stack=stack)
         parent_id = stack[-1] if stack else None
         if parent_id is None:
-            await message.answer("🏠 Головне меню", reply_markup=main_menu_keyboard())
+            data2 = await state.get_data()
+            city2 = data2.get("user_city")
+            city_line2 = f"\n📍 Місто: <b>{city2}</b>" if city2 else ""
+            await message.answer(
+                f"🏠 Головне меню{city_line2}\n\nОбери категорію:",
+                reply_markup=main_menu_keyboard(),
+                parse_mode="HTML",
+            )
         else:
             parent_btn = get_button_by_id(parent_id)
             label = parent_btn.display if parent_btn else "Оберіть варіант:"

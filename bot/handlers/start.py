@@ -43,8 +43,12 @@ async def cmd_start(message: Message, state: FSMContext):
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     await preserve_clear(state)
     await ensure_loaded()
+    data = await state.get_data()
+    city = data.get("user_city")
+    city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
     await callback.message.answer(
-        "🏠 Головне меню\n\nОбери категорію або напиши запит:",
+        f"🏠 Головне меню{city_line}\n\nОбери категорію:",
         reply_markup=main_menu_keyboard(),
+        parse_mode="HTML",
     )
     await callback.answer()
