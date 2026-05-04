@@ -45,6 +45,14 @@ def find_button(display_text: str) -> MenuButton | None:
     return None
 
 
+def get_button_by_id(btn_id: int) -> MenuButton | None:
+    """Find button by its ID (used for nav stack back-navigation)."""
+    for b in _cache:
+        if b.id == btn_id:
+            return b
+    return None
+
+
 def has_children(btn_id: int) -> bool:
     return any(b.parent_id == btn_id and b.is_active for b in _cache)
 

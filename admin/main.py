@@ -486,6 +486,7 @@ async def api_get_buttons(request: Request):
             "id": b.id, "label": b.label, "emoji": b.emoji or "",
             "action_type": b.action_type, "ai_prompt": b.ai_prompt or "",
             "parent_id": b.parent_id, "position": b.position, "is_active": b.is_active,
+            "direct_params": b.direct_params or "",
         }
     return JSONResponse([btn_to_dict(b) for b in all_buttons])
 
@@ -502,6 +503,7 @@ async def api_create_button(request: Request):
         label, body.get("emoji", "").strip(), body.get("action_type", "ai_search"),
         body.get("ai_prompt", "").strip() or None,
         body.get("parent_id"), int(body.get("position", 0)),
+        direct_params=body.get("direct_params") or None,
     )
     return JSONResponse({"ok": True})
 
@@ -515,6 +517,7 @@ async def api_update_button(request: Request, btn_id: int):
         btn_id, body.get("label", "").strip(), body.get("emoji", "").strip(),
         body.get("action_type", "ai_search"), body.get("ai_prompt", "").strip() or None,
         body.get("parent_id"), int(body.get("position", 0)),
+        direct_params=body.get("direct_params") or None,
     )
     return JSONResponse({"ok": True})
 

@@ -14,10 +14,11 @@ class MenuButton:
     parent_id: Optional[int]
     label: str
     emoji: str
-    action_type: str   # ai_search | submenu | lead_form | manager | custom_query
+    action_type: str   # ai_search | submenu | lead_form | manager | custom_query | direct_search
     ai_prompt: Optional[str]
     position: int
     is_active: bool
+    direct_params: Optional[str] = None  # JSON: {"intent":"event","category":"кіно","date_filter":"today"}
 
     @property
     def display(self) -> str:
@@ -85,6 +86,10 @@ async def init_menu_buttons() -> None:
             created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # Safe migration: add direct_params column if it doesn't exist yet
+    await pool.execute("""
+        ALTER TABLE bot_menu_buttons ADD COLUMN IF NOT EXISTS direct_params TEXT
+    """)
 
     # Seed defaults only if table is empty
     count = await pool.fetchval("SELECT COUNT(*) FROM bot_menu_buttons")
@@ -115,7 +120,7 @@ async def load_all_buttons() -> list[MenuButton]:
     """Return all active buttons ordered by parent_id NULLS FIRST, then position."""
     pool = await get_pool()
     rows = await pool.fetch("""
-        SELECT id, parent_id, label, emoji, action_type, ai_prompt, position, is_active
+        SELECT id, parent_id, label, emoji, action_type, ai_prompt, position, is_active, direct_params
         FROM bot_menu_buttons
         ORDER BY parent_id NULLS FIRST, position, id
     """)
@@ -125,7 +130,7 @@ async def load_all_buttons() -> list[MenuButton]:
 async def get_button(btn_id: int) -> Optional[MenuButton]:
     pool = await get_pool()
     row = await pool.fetchrow("""
-        SELECT id, parent_id, label, emoji, action_type, ai_prompt, position, is_active
+        SELECT id, parent_id, label, emoji, action_type, ai_prompt, position, is_active, direct_params
         FROM bot_menu_buttons WHERE id = $1
     """, btn_id)
     return MenuButton(**dict(row)) if row else None
@@ -133,26 +138,28 @@ async def get_button(btn_id: int) -> Optional[MenuButton]:
 
 async def create_button(
     label: str, emoji: str, action_type: str,
-    ai_prompt: Optional[str], parent_id: Optional[int], position: int
+    ai_prompt: Optional[str], parent_id: Optional[int], position: int,
+    direct_params: Optional[str] = None,
 ) -> int:
     pool = await get_pool()
     row = await pool.fetchrow("""
-        INSERT INTO bot_menu_buttons (parent_id, label, emoji, action_type, ai_prompt, position)
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
-    """, parent_id, label, emoji, action_type, ai_prompt or None, position)
+        INSERT INTO bot_menu_buttons (parent_id, label, emoji, action_type, ai_prompt, position, direct_params)
+        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id
+    """, parent_id, label, emoji, action_type, ai_prompt or None, position, direct_params or None)
     return row["id"]
 
 
 async def update_button(
     btn_id: int, label: str, emoji: str, action_type: str,
-    ai_prompt: Optional[str], parent_id: Optional[int], position: int
+    ai_prompt: Optional[str], parent_id: Optional[int], position: int,
+    direct_params: Optional[str] = None,
 ) -> None:
     pool = await get_pool()
     await pool.execute("""
         UPDATE bot_menu_buttons
-        SET label=$1, emoji=$2, action_type=$3, ai_prompt=$4, parent_id=$5, position=$6
-        WHERE id=$7
-    """, label, emoji, action_type, ai_prompt or None, parent_id, position, btn_id)
+        SET label=$1, emoji=$2, action_type=$3, ai_prompt=$4, parent_id=$5, position=$6, direct_params=$7
+        WHERE id=$8
+    """, label, emoji, action_type, ai_prompt or None, parent_id, position, direct_params or None, btn_id)
 
 
 async def toggle_button(btn_id: int) -> None:

@@ -3,14 +3,19 @@ import { getButtons, createButton, updateButton, deleteButton, toggleButton } fr
 import Header from '../components/Header.jsx';
 
 const ACTION_TYPES = [
-  { value: 'ai_search', label: '🤖 AI пошук' },
-  { value: 'lead_form', label: '📋 Форма заявки' },
-  { value: 'text', label: '💬 Текст' },
-  { value: 'url', label: '🔗 URL' },
+  { value: 'ai_search',     label: '🤖 AI пошук' },
+  { value: 'direct_search', label: '🎯 Прямий пошук (JSON)' },
+  { value: 'submenu',       label: '📂 Підменю' },
+  { value: 'lead_form',     label: '📋 Форма заявки' },
+  { value: 'custom_query',  label: '✍️ Свій запит' },
+  { value: 'manager',       label: '📞 Менеджер' },
+  { value: 'text',          label: '💬 Текст' },
+  { value: 'url',           label: '🔗 URL' },
 ];
 
 const EMPTY_FORM = {
-  label: '', emoji: '', action_type: 'ai_search', ai_prompt: '', parent_id: '', position: 0,
+  label: '', emoji: '', action_type: 'ai_search', ai_prompt: '',
+  parent_id: '', position: 0, direct_params: '',
 };
 
 export default function Buttons() {
@@ -53,6 +58,7 @@ export default function Buttons() {
       ai_prompt: btn.ai_prompt || '',
       parent_id: btn.parent_id ?? '',
       position: btn.position ?? 0,
+      direct_params: btn.direct_params || '',
     });
     setEditingId(btn.id);
     setShowModal(true);
@@ -67,6 +73,7 @@ export default function Buttons() {
         ...form,
         parent_id: form.parent_id !== '' ? Number(form.parent_id) : null,
         position: Number(form.position) || 0,
+        direct_params: form.direct_params.trim() || null,
       };
       if (editingId) {
         await updateButton(editingId, payload);
@@ -100,6 +107,10 @@ export default function Buttons() {
   };
 
   const f = (key) => (e) => setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  // Build label map for parent_id selector
+  const buttonLabelMap = {};
+  buttons.forEach((b) => { buttonLabelMap[b.id] = `${b.emoji ? b.emoji + ' ' : ''}${b.label} (#${b.id})`; });
 
   return (
     <div className="page-wrap">
@@ -148,8 +159,21 @@ export default function Buttons() {
                       onEdit={openEdit}
                       onToggle={handleToggle}
                       onDelete={handleDelete}
+                      onAddChild={() => openAdd(child.id)}
                       isChild
                     />
+                    {childrenOf(child.id).map((grandchild) => (
+                      <div key={grandchild.id} style={{ marginLeft: 32, marginTop: 6 }}>
+                        <ButtonRow
+                          btn={grandchild}
+                          onEdit={openEdit}
+                          onToggle={handleToggle}
+                          onDelete={handleDelete}
+                          isChild
+                          level={3}
+                        />
+                      </div>
+                    ))}
                   </div>
                 ))}
               </div>
@@ -161,7 +185,7 @@ export default function Buttons() {
       {/* Modal */}
       {showModal && (
         <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+          <div className="modal-box" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
             <div className="modal-header">
               <h3>{editingId ? 'Редагувати кнопку' : 'Нова кнопка'}</h3>
               <button className="modal-close" onClick={() => setShowModal(false)}>✕</button>
@@ -192,10 +216,51 @@ export default function Buttons() {
                 </div>
               )}
 
+              {form.action_type === 'direct_search' && (
+                <div>
+                  <label className="field-label">Параметри пошуку (JSON)</label>
+                  <textarea
+                    className="field-input"
+                    value={form.direct_params}
+                    onChange={f('direct_params')}
+                    rows={4}
+                    placeholder={'{"intent":"event","category":"кіно","date_filter":"today"}'}
+                    style={{ fontFamily: 'monospace', fontSize: 12, resize: 'vertical' }}
+                  />
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.6 }}>
+                    <strong>Приклади:</strong><br />
+                    <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>
+                      {'{"intent":"event","category":"кіно","date_filter":"today"}'}
+                    </code><br />
+                    <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>
+                      {'{"intent":"event","date_filter":"weekend"}'}
+                    </code><br />
+                    <code style={{ background: 'var(--bg)', padding: '1px 4px', borderRadius: 3 }}>
+                      {'{"intent":"service","categories":["ресторани та банкетні зали"]}'}
+                    </code><br />
+                    <span style={{ color: 'var(--text-secondary)' }}>
+                      intent: "event" | "service" &nbsp;·&nbsp;
+                      date_filter: "today" | "weekend" | "week" | "month" | null
+                    </span>
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: 10 }}>
                 <div>
-                  <label className="field-label">Батьківська кнопка (ID)</label>
-                  <input className="field-input" value={form.parent_id} onChange={f('parent_id')} placeholder="Немає" type="number" min="0" />
+                  <label className="field-label">Батьківська кнопка</label>
+                  <select
+                    className="field-input"
+                    value={form.parent_id}
+                    onChange={f('parent_id')}
+                  >
+                    <option value="">— Немає (корінь) —</option>
+                    {buttons.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.emoji ? b.emoji + ' ' : ''}{b.label} (#{b.id})
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="field-label">Позиція</label>
@@ -222,6 +287,8 @@ export default function Buttons() {
         .btn-row-inactive { opacity: 0.55; }
         .btn-label { flex: 1; font-size: 14px; font-weight: 600; color: var(--text-primary); }
         .btn-type { font-size: 11.5px; color: var(--text-muted); background: var(--bg); border-radius: 4px; padding: 2px 7px; }
+        .btn-type-direct { font-size: 11.5px; color: #fff; background: #7c3aed; border-radius: 4px; padding: 2px 7px; }
+        .btn-type-submenu { font-size: 11.5px; color: #fff; background: #0284c7; border-radius: 4px; padding: 2px 7px; }
         .btn-action-sm { padding: 5px 11px; border: 1.5px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; background: #fff; color: var(--text-secondary); transition: all .15s; }
         .btn-action-sm:hover { border-color: var(--accent); color: var(--accent); }
         .btn-action-sm.danger:hover { border-color: #dc2626; color: #dc2626; }
@@ -231,7 +298,7 @@ export default function Buttons() {
         .toggle-on::after { transform: translateX(16px); }
         .toggle-off { background: #d1d5db; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; display: flex; align-items: center; justify-content: center; }
-        .modal-box { background: #fff; border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0,0,0,.18); width: 90%; max-width: 500px; }
+        .modal-box { background: #fff; border-radius: var(--radius); box-shadow: 0 20px 60px rgba(0,0,0,.18); width: 90%; max-width: 500px; max-height: 90vh; overflow-y: auto; }
         .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px 0; }
         .modal-header h3 { font-size: 17px; font-weight: 700; }
         .modal-close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--text-muted); padding: 4px 8px; border-radius: 6px; }
@@ -241,7 +308,14 @@ export default function Buttons() {
   );
 }
 
-function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild }) {
+function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild, level }) {
+  const actionType = ACTION_TYPES.find((t) => t.value === btn.action_type);
+  const badgeClass =
+    btn.action_type === 'direct_search' ? 'btn-type-direct' :
+    btn.action_type === 'submenu' ? 'btn-type-submenu' :
+    'btn-type';
+  const badgeLabel = actionType?.label || btn.action_type;
+
   return (
     <div className={`btn-row${btn.is_active ? '' : ' btn-row-inactive'}`}>
       <button
@@ -252,9 +326,10 @@ function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild }) {
       <span className="btn-label">
         {btn.emoji && <span style={{ marginRight: 6 }}>{btn.emoji}</span>}
         {btn.label}
-        {isChild && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳ підкнопка</span>}
+        {isChild && level === 3 && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳↳ рівень 3</span>}
+        {isChild && !level && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳ підкнопка</span>}
       </span>
-      <span className="btn-type">{ACTION_TYPES.find((t) => t.value === btn.action_type)?.label || btn.action_type}</span>
+      <span className={badgeClass}>{badgeLabel}</span>
       <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>#{btn.id} · pos {btn.position}</span>
       {onAddChild && (
         <button className="btn-action-sm" onClick={onAddChild} title="Додати підкнопку">+ суб</button>
