@@ -534,7 +534,7 @@ async def handle_free_query_state(message: Message, bot: Bot, state: FSMContext)
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
-    # If manager has taken over this chat — don't process with AI
+    # If manager has taken over this chat — pass through silently (human.py handles it)
     if message.from_user:
         try:
             session = await get_session_by_user(message.from_user.id)
@@ -542,7 +542,12 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
                 return
         except Exception:
             pass
-    await _do_search(message, bot, state, message.text)
+    # Free text is disabled — redirect to menu
+    from bot.menu_cache import main_menu_keyboard
+    await message.answer(
+        "👇 Оберіть із меню або скористайтесь кнопкою «✍️ Свій запит»:",
+        reply_markup=main_menu_keyboard(),
+    )
 
 
 # ── Ще варіанти ────────────────────────────────────────────────────────────
