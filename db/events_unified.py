@@ -237,9 +237,9 @@ async def search_crm_events(
     params: list = []
 
     if specific_date:
-        # Exact date picked from calendar (YYYY-MM-DD)
-        where.append(f"date = ${len(params)+1}::date")
-        params.append(specific_date)
+        # Exact date picked from calendar (YYYY-MM-DD) — must pass datetime.date, not str
+        where.append(f"date = ${len(params)+1}")
+        params.append(_date(specific_date))
     elif date_filter == "today":
         where.append("date = CURRENT_DATE")
     elif date_filter == "weekend":
