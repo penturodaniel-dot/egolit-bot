@@ -159,16 +159,15 @@ async def _do_direct_search(message: Message, bot: Bot, state: FSMContext, btn):
         candidates = raw[:CANDIDATE_FETCH]
 
         if not candidates:
-            # No results — show not-found message inline (mirrors _send_results behaviour)
             from bot.keyboards import manager_choice_keyboard
             not_found_text = (
                 "😔 На жаль, нічого не знайдено за твоїм запитом.\n\n"
                 "Наш менеджер зможе допомогти підібрати варіант особисто 👇"
             )
             try:
-                await thinking_msg.edit_text(not_found_text)
+                await thinking_msg.delete()
             except Exception:
-                await message.answer(not_found_text)
+                pass
             await message.answer(not_found_text, reply_markup=manager_choice_keyboard())
             return
 
