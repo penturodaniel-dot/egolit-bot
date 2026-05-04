@@ -53,6 +53,7 @@ async def search_products(
     city_id: int | None = None,              # ignored (legacy param)
     max_price: int | None = None,
     search_text: str | None = None,
+    city: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[ProductResult]:
@@ -64,6 +65,7 @@ async def search_products(
         category_names=category_names,
         search_text=search_text,
         max_price=max_price,
+        city=city,
         limit=limit,
         offset=offset,
     )
@@ -112,12 +114,14 @@ async def search_karabas_events(
     offset: int = 0,
     date_filter: str | None = None,
     search_text: str | None = None,
+    city: str | None = None,
 ) -> list[EventResult]:
     """Search events from CRM unified events table only."""
     rows = await search_crm_events(
         search_text=search_text,
         category=category,
         date_filter=date_filter,
+        city=city,
         limit=limit,
         offset=offset,
     )
@@ -129,12 +133,14 @@ async def search_kino_events(
     offset: int = 0,
     date_filter: str | None = None,
     search_text: str | None = None,
+    city: str | None = None,
 ) -> list[EventResult]:
     """Search cinema events from CRM unified events table."""
     rows = await search_crm_events(
         search_text=search_text,
         category="кіно",
         date_filter=date_filter,
+        city=city,
         limit=limit,
         offset=offset,
     )

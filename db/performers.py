@@ -151,6 +151,7 @@ async def search_performers(
     category_names: list[str] | None = None,
     search_text: str | None = None,
     max_price: int | None = None,
+    city: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[dict]:
@@ -180,6 +181,10 @@ async def search_performers(
         )
         params.extend(f"%{w}%" for w in words)
         where.append(f"({word_conds})")
+
+    if city:
+        where.append(f"city ILIKE ${len(params)+1}")
+        params.append(f"%{city}%")
 
     where_sql = " AND ".join(where)
     params += [limit, offset]

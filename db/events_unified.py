@@ -225,6 +225,7 @@ async def search_crm_events(
     search_text: str | None = None,
     category: str | None = None,
     date_filter: str | None = None,
+    city: str | None = None,
     limit: int = 5,
     offset: int = 0,
 ) -> list[dict]:
@@ -255,6 +256,10 @@ async def search_crm_events(
     if category:
         where.append(f"category ILIKE ${len(params)+1}")
         params.append(f"%{category}%")
+
+    if city:
+        where.append(f"city ILIKE ${len(params)+1}")
+        params.append(f"%{city}%")
 
     params += [limit, offset]
     where_sql = " AND ".join(where)

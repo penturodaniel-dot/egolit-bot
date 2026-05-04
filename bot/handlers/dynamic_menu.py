@@ -132,6 +132,7 @@ async def _do_direct_search(message: Message, bot: Bot, state: FSMContext, btn):
     categories = params.get("categories", [])
     date_filter = params.get("date_filter")
     search_text = params.get("search_text")
+    city = params.get("city") or None
 
     PAGE_SIZE = 2
     _fetch = CANDIDATE_FETCH + 1
@@ -141,11 +142,11 @@ async def _do_direct_search(message: Message, bot: Bot, state: FSMContext, btn):
     try:
         if intent == "event":
             if category == "кіно":
-                raw = await search_kino_events(limit=_fetch, date_filter=date_filter)
+                raw = await search_kino_events(limit=_fetch, date_filter=date_filter, city=city)
             else:
                 raw = await search_karabas_events(
                     category=category, limit=_fetch,
-                    date_filter=date_filter, search_text=search_text,
+                    date_filter=date_filter, search_text=search_text, city=city,
                 )
         else:  # service
             cat_list = categories if categories else ([category] if category else [])
@@ -153,6 +154,7 @@ async def _do_direct_search(message: Message, bot: Bot, state: FSMContext, btn):
                 category_names=cat_list if cat_list else None,
                 limit=_fetch,
                 search_text=search_text,
+                city=city,
             )
 
         has_more = len(raw) > CANDIDATE_FETCH
