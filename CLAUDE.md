@@ -484,10 +484,23 @@ event_category (тільки для intent=event)
 | `select_city` | Зберігає місто в FSM (`user_city`). JSON: `{"city":"Дніпро"}`. Якщо є діти — відкриває підменю. Ховається з клавіатури після вибору |
 
 #### Навігаційний стек (`menu_stack`)
-- Зберігається в FSM state як `list[int]` (список `btn.id` батьків)
-- При кліку `submenu` → `stack.append(btn.id)` → `update_data(menu_stack=stack)`
-- При натисканні ◀️ Назад → `stack.pop()` → якщо `len(stack) <= 1` → головне меню
+- Зберігається в FSM state як `list[int]` (список `btn.id` відкритих підменю)
+- При кліку `submenu` / `select_city` → `stack.append(btn.id)` → `update_data(menu_stack=stack)`
+- **`menu_stack` входить до `_PERSISTENT_KEYS`** → переживає `preserve_clear()` після пошуку/лід-форми
 - `get_button_by_id(id)` у `bot/menu_cache.py` — пошук кнопки по id в кеші
+
+**Логіка кнопки "⬅️ Назад" (`handle_back`):**
+```
+stack=[]              → показати вибір міста (root)
+stack=[city_id]       → pop → stack=[] → prev==home_parent_id → вибір міста
+stack=[city_id, x]    → pop → stack=[city_id] → parent==home_parent_id
+                        → sub_menu_keyboard_city_home(city_id)  ← "🗺 Обрати місто"
+stack=[city_id, x, y] → pop → stack=[city_id, x] → звичайний sub_menu_keyboard(x)
+```
+
+**Кнопка "🗺 Обрати місто"** (`CITY_SELECT_BUTTON` у `menu_cache.py`):
+- Показується замість "⬅️ Назад" на рівні домашнього підменю міста
+- При натисканні → очищає `menu_stack=[]`, `user_home_parent_id=None`, `user_city=None` → вибір міста
 
 #### `direct_search` — JSON параметри (`direct_params` в DB)
 ```json
@@ -554,26 +567,49 @@ class LeadFlow(StatesGroup):
 - У `dynamic_menu.py` callback handlers скоуповані фільтром `MenuSearch.waiting_date_pick` — не конфліктують з lead flow
 
 #### Збереження міста користувача (`user_city`)
-- **`bot/fsm_helpers.py`** — `preserve_clear(state)` замінює всі `state.clear()`. Зберігає ключі з `_PERSISTENT_KEYS = {"user_city"}` після очищення FSM
-- **`user_city`** — зберігається в FSM state, переживає будь-які навігаційні переходи
-- **`select_city` кнопка** — при кліку викликає `_do_select_city()`: зберігає місто, відкриває підменю якщо є діти, або повертає головне меню
-- **`main_menu_keyboard(hide_city=True)`** — ховає всі кнопки з `action_type='select_city'` з клавіатури після того, як місто вже збережено
-- **`main_menu_keyboard_for_state(state)`** — async хелпер: читає `user_city` з FSM → автоматично вирішує `hide_city`
+- **`bot/fsm_helpers.py`** — `preserve_clear(state)` замінює всі `state.clear()`. Зберігає ключі з:
+  ```python
+  _PERSISTENT_KEYS = {"user_city", "user_home_parent_id", "menu_stack"}
+  ```
+- **`user_city`** — назва міста (рядок), переживає будь-які FSM-переходи
+- **`user_home_parent_id`** — `btn.id` кнопки `select_city` яку обрав юзер. Використовується для визначення "домашнього рівня" міста при Back-навігації. Очищається при натисканні "🗺 Обрати місто".
+- **`menu_stack`** — список `btn.id` відкритих підменю. Переживає пошуки та лід-форми → Back завжди повертає на правильний рівень
+- **`select_city` кнопка** — при кліку → `_do_select_city()`: зберігає `user_city` + `user_home_parent_id`, пушить у `menu_stack`, показує `sub_menu_keyboard_city_home(btn.id)`
+- **`sub_menu_keyboard_city_home(parent_id)`** — клавіатура з "🗺 Обрати місто" замість "⬅️ Назад". Використовується на домашньому рівні міста
+- **`main_menu_keyboard(hide_city=True)`** — ховає `select_city` кнопки (більше не використовується активно — вибір міста тепер через "🗺 Обрати місто")
 - **Всі `state.clear()` замінені** на `preserve_clear(state)` у 4 файлах: `dynamic_menu.py`, `search.py`, `lead.py`, `start.py`
-- **Місто у привітанні**: головне меню показує `📍 Місто: Дніпро` якщо місто збережено
+- **`cmd_start`**: якщо `user_home_parent_id` є → одразу показує підменю міста; інакше → екран вибору міста
+- **`callback_main_menu`**: аналогічно — якщо місто обрано → підменю міста; інакше → вибір міста
 
-#### Структура меню — важливо!
-Кнопки типу `select_city` повинні бути кореневими, а всі пункти меню (submenu/direct_search/etc.) — теж кореневими:
+#### Структура меню — багатомістна архітектура (актуальна)
+Кожне місто — окрема кнопка `select_city` з власними дочірніми підменю:
 ```
 ROOT:
-├── 📍 Оберіть місто  [select_city]  ← ховається після вибору
-├── 🌆 Куди піти сьогодні  [submenu]
-│    ├── Що у кіно?   [direct_search]
-│    └── ...
-├── 📅 події на вихідні  [submenu]
-└── ...
+└── 📍 Дніпро  [select_city, id=11]          ← єдина кнопка на головному екрані
+     ├── Куди піти сьогодні  [submenu, id=1]  ← домашнє підменю міста
+     │    ├── Що у кіно?   [direct_search]    ← city береться з user_city (FSM)
+     │    ├── Що у театрі? [direct_search]
+     │    └── ...
+     ├── Події на вихідні   [submenu]
+     ├── Ідея для побачення [submenu]
+     ├── Куди з дітьми      [submenu]
+     └── Чат з менеджером   [manager]
+
+(майбутнє — Київ, Харків тощо додаються як аналогічні root select_city кнопки)
 ```
-⚠️ **Антипаттерн**: якщо всі пункти меню є дочірніми від `select_city` кнопки → після вибору міста головне меню стає **порожнім** (усі `select_city` сховані, дочірні недоступні з кореня).
+
+**Навігаційні клавіатури по рівнях:**
+| Рівень | Що показується | Кнопка "назад" |
+|--------|---------------|---------------|
+| Root (вибір міста) | тільки `select_city` кнопки | — |
+| Домашнє підменю міста (stack=[city_id]) | пункти міста | `🗺 Обрати місто` |
+| Підпункт категорії (stack=[city_id, x]) | листові кнопки | `⬅️ Назад` |
+
+**Місто у пошуку** (`direct_search` кнопки):
+- Поле `city` у `direct_params` — опціональне. Якщо не вказане → береться `user_city` з FSM
+- Не потрібно хардкодити місто в кожну кнопку якщо кнопка знаходиться під `select_city`
+
+⚠️ **Не використовувати старий підхід** (всі пункти меню на кореневому рівні поряд з `select_city`) — це ламає Back-навігацію і розрахована на одне місто без підменю.
 
 #### Відключення вільного тексту
 Бот більше не приймає довільні повідомлення як пошукові запити.
@@ -804,7 +840,8 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 - **Sticky Telegram-клавіатура не зникала під час lead-форми** — `InlineKeyboardMarkup` не прибирає `ReplyKeyboard`. Виправлено: `start_lead_flow()` надсилає `ReplyKeyboardRemove()` перед першим питанням форми.
 - **`state.clear()` стирав збережене місто** — всі 9 викликів `state.clear()` в 4 файлах замінено на `preserve_clear(state)` з `bot/fsm_helpers.py`. Тепер `user_city` переживає будь-які FSM-переходи.
 - **Вибір дати з календаря завжди повертав 0 результатів** — `search_crm_events` передавав `specific_date` як рядок `"2026-05-15"` в asyncpg. asyncpg вимагає `datetime.date` об'єкт для колонки `DATE`. Помилка тихо ковталась `except Exception: return []`. Виправлено: `params.append(_date(specific_date))` у `db/events_unified.py`.
-- **"Назад" не повертав у головне меню після вибору міста** — всі пункти меню були дочірніми від єдиної кореневої `select_city` кнопки. Після її приховування головне меню ставало порожнім. Виправлено: кнопки меню (id=1,2,3,4,5,6,8) перенесено на кореневий рівень (`parent_id=NULL`) через SQL `UPDATE bot_menu_buttons SET parent_id = NULL WHERE id IN (1,2,3,4,5,6,8)`.
+- **"Назад" не повертав у головне меню після вибору міста** — всі пункти меню були дочірніми від єдиної кореневої `select_city` кнопки. Після її приховування головне меню ставало порожнім. Виправлено: впроваджена багатомістна архітектура — кнопки меню залишаються під `select_city`, але Back-навігація використовує `user_home_parent_id` + `sub_menu_keyboard_city_home()` з кнопкою "🗺 Обрати місто".
+- **Back після вибору дати/пошуку вів на вибір міста замість попереднього підменю** — `preserve_clear()` стирала `menu_stack`. Виправлено: `menu_stack` додано до `_PERSISTENT_KEYS` у `bot/fsm_helpers.py`.
 
 ## ТЗ completion status
 | Feature | Status |
