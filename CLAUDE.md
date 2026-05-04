@@ -46,6 +46,10 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 docker compose -f /opt/egolist-bot/docker-compose.yml ps
 ```
 
+> ⚠️ **SSH з Windows (Claude Code)**: звичайний `ssh` через PowerShell зависає (чекає пароль інтерактивно).
+> Використовуй **plink** (PuTTY): `& "C:\Program Files\PuTTY\plink.exe" -ssh -pw "PASSWORD" -batch root@91.239.234.193 "команда"`
+> Для копіювання файлів: `& "C:\Program Files\PuTTY\pscp.exe" -pw "PASSWORD" -batch file root@91.239.234.193:/tmp/`
+
 > ⚠️ **docker-compose має лише один app-сервіс — `bot`** (не `admin`!).
 > Бот і адмін-панель запускаються в одному контейнері `egolist_bot`.
 > Команда `--build admin` поверне помилку "no such service: admin".
@@ -85,6 +89,7 @@ egolist-bot/
 │   │   └── human.py          # Human mode + "🚪 Вийти з чату" button + chat_sessions sync
 │   ├── middleware.py         # ChatPersistenceMiddleware — saves all incoming msgs to DB
 │   ├── menu_cache.py         # 30s TTL cache for dynamic buttons + get_button_by_id()
+│   ├── fsm_helpers.py        # preserve_clear() — очищає FSM зберігаючи persistent keys (user_city)
 │   ├── keyboards.py          # Inline keyboards (results_keyboard, manager_choice_keyboard, etc.)
 │   ├── calendar_widget.py    # Inline calendar: build_calendar() + build_date_picker_calendar()
 │   └── states.py             # FSM states: SearchFlow, MenuSearch, LeadFlow
@@ -464,6 +469,7 @@ event_category (тільки для intent=event)
 | `custom_query` | Просить користувача ввести запит (встановлює `SearchFlow.waiting_query`) |
 | `lead_form` | Запускає 7-крокову LeadFlow |
 | `manager` | Показує `manager_choice_keyboard()` (заявка або живий чат) |
+| `select_city` | Зберігає місто в FSM (`user_city`). JSON: `{"city":"Дніпро"}`. Якщо є діти — відкриває підменю. Ховається з клавіатури після вибору |
 
 #### Навігаційний стек (`menu_stack`)
 - Зберігається в FSM state як `list[int]` (список `btn.id` батьків)
@@ -486,6 +492,7 @@ event_category (тільки для intent=event)
 - `ask_date: true` → зберігає `{**params, "label": btn.display}` як `pending_search_params` у FSM → встановлює `MenuSearch.waiting_date_pick` → показує `_date_picker_keyboard()` (Сьогодні / Вихідні / Тиждень / Місяць / Календар / Всі події)
 - Після вибору дати → `_exec_pending_search()` відновлює params з FSM і виконує пошук
 - **Не використовувати `ask_date` разом з `date_filter`** — вони взаємовиключні
+- `ask_city: true` → показує inline-клавіатуру з 6 містами (`CITIES` у `dynamic_menu.py`) → після вибору зберігає `user_city` і продовжує (або ланцюгує в `ask_date` якщо обидва true)
 
 #### FSM стани (`bot/states.py`)
 ```python
@@ -496,6 +503,7 @@ class SearchFlow(StatesGroup):
     waiting_budget   = State()  # AI clarification: вибір бюджету
 
 class MenuSearch(StatesGroup):
+    waiting_city_pick = State()  # city picker після кнопки з ask_city=true
     waiting_date_pick = State()  # date picker після кнопки з ask_date=true
 
 class LeadFlow(StatesGroup):
@@ -510,6 +518,28 @@ class LeadFlow(StatesGroup):
   - `CAL:G:{y}:{m}` — навігація по місяцях
   - `CAL:D:{y}:{m}:{d}` — вибір конкретної дати
 - У `dynamic_menu.py` callback handlers скоуповані фільтром `MenuSearch.waiting_date_pick` — не конфліктують з lead flow
+
+#### Збереження міста користувача (`user_city`)
+- **`bot/fsm_helpers.py`** — `preserve_clear(state)` замінює всі `state.clear()`. Зберігає ключі з `_PERSISTENT_KEYS = {"user_city"}` після очищення FSM
+- **`user_city`** — зберігається в FSM state, переживає будь-які навігаційні переходи
+- **`select_city` кнопка** — при кліку викликає `_do_select_city()`: зберігає місто, відкриває підменю якщо є діти, або повертає головне меню
+- **`main_menu_keyboard(hide_city=True)`** — ховає всі кнопки з `action_type='select_city'` з клавіатури після того, як місто вже збережено
+- **`main_menu_keyboard_for_state(state)`** — async хелпер: читає `user_city` з FSM → автоматично вирішує `hide_city`
+- **Всі `state.clear()` замінені** на `preserve_clear(state)` у 4 файлах: `dynamic_menu.py`, `search.py`, `lead.py`, `start.py`
+- **Місто у привітанні**: головне меню показує `📍 Місто: Дніпро` якщо місто збережено
+
+#### Структура меню — важливо!
+Кнопки типу `select_city` повинні бути кореневими, а всі пункти меню (submenu/direct_search/etc.) — теж кореневими:
+```
+ROOT:
+├── 📍 Оберіть місто  [select_city]  ← ховається після вибору
+├── 🌆 Куди піти сьогодні  [submenu]
+│    ├── Що у кіно?   [direct_search]
+│    └── ...
+├── 📅 події на вихідні  [submenu]
+└── ...
+```
+⚠️ **Антипаттерн**: якщо всі пункти меню є дочірніми від `select_city` кнопки → після вибору міста головне меню стає **порожнім** (усі `select_city` сховані, дочірні недоступні з кореня).
 
 #### Відключення вільного тексту
 Бот більше не приймає довільні повідомлення як пошукові запити.
@@ -738,6 +768,9 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 - **Internal Server Error при збереженні події/виконавця** — `body.get("tags", "").strip()` не спрацьовує коли React надсилає `null` (default `""` діє тільки якщо ключ відсутній, але `null` — це значення). Виправлено у всіх 4 CRUD-ендпоїнтах: `(body.get("tags") or "").strip()`.
 - **Пошук не знаходив вручну доданих подій (Килхаус, Майкл)** — AI класифікував запит як `event_category='концерти'`, але події збережені як `category='кіно'`. Категорія не збігалась → 0 результатів. Виправлено: якщо є `search_text` → `category=None` (пошук по всіх категоріях), `event_category` ігнорується.
 - **Sticky Telegram-клавіатура не зникала під час lead-форми** — `InlineKeyboardMarkup` не прибирає `ReplyKeyboard`. Виправлено: `start_lead_flow()` надсилає `ReplyKeyboardRemove()` перед першим питанням форми.
+- **`state.clear()` стирав збережене місто** — всі 9 викликів `state.clear()` в 4 файлах замінено на `preserve_clear(state)` з `bot/fsm_helpers.py`. Тепер `user_city` переживає будь-які FSM-переходи.
+- **Вибір дати з календаря завжди повертав 0 результатів** — `search_crm_events` передавав `specific_date` як рядок `"2026-05-15"` в asyncpg. asyncpg вимагає `datetime.date` об'єкт для колонки `DATE`. Помилка тихо ковталась `except Exception: return []`. Виправлено: `params.append(_date(specific_date))` у `db/events_unified.py`.
+- **"Назад" не повертав у головне меню після вибору міста** — всі пункти меню були дочірніми від єдиної кореневої `select_city` кнопки. Після її приховування головне меню ставало порожнім. Виправлено: кнопки меню (id=1,2,3,4,5,6,8) перенесено на кореневий рівень (`parent_id=NULL`) через SQL `UPDATE bot_menu_buttons SET parent_id = NULL WHERE id IN (1,2,3,4,5,6,8)`.
 
 ## ТЗ completion status
 | Feature | Status |
@@ -793,3 +826,9 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 | City filter in direct_search JSON params | ✅ |
 | MenuSearch FSM state — scopes calendar callbacks, no conflict with lead flow | ✅ |
 | Buttons page self-serve documentation panel (📖 collapsible, 9 JSON examples) | ✅ |
+| select_city action type — saves city to FSM, hides after selection, admin UI support | ✅ |
+| City persistence (preserve_clear) — user_city survives all FSM clears | ✅ |
+| City shown in main menu greeting (📍 Місто: ...) | ✅ |
+| ask_city=true in direct_params — city picker before search | ✅ |
+| Calendar date search fix — specific_date passed as datetime.date to asyncpg | ✅ |
+| Menu root structure fix — select_city и menu items at same root level | ✅ |
