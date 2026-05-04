@@ -203,6 +203,18 @@ egolist-bot/
 5. Результати: `PAGE_SIZE=2` карток з причиною підбору + кнопка "🔄 Ще варіанти" якщо є більше
 6. При 0 результатах → `manager_choice_keyboard()` з кнопками 📝 Залишити заявку + 💬 Живий чат
 
+### Де використовується AI (GPT-5 mini) у пошуку
+| Крок | AI бере участь? | Деталі |
+|------|----------------|--------|
+| `direct_search` кнопка → SQL запит | ❌ | Чистий SQL по JSON-параметрах кнопки |
+| Вільний текст → `parse_intent()` | ✅ | Визначає intent/category/date_filter/search_text |
+| БД повернула кандидатів → вибір топ-2 | ✅ | `rerank_and_explain()` ранжує за релевантністю |
+| Генерація "чому підходить" для картки | ✅ | `rerank_and_explain()` → поле `reasons` |
+| Вступний текст результатів | ✅ | `rerank_and_explain()` → поле `intro` |
+| "Ще варіанти" → повторний ранжинг | ✅ | Новий виклик `rerank_and_explain()` |
+
+> **Підсумок**: SQL-запит до БД — завжди без AI. AI задіюється двічі: при парсингу вільного тексту (`parse_intent`) та при ранжуванні результатів (`rerank_and_explain`). Для `direct_search` кнопок — тільки ранжування.
+
 ### event_needs_no_clarif — код-рівневий захист (важливо!)
 У `bot/handlers/search.py` є жорсткий захист: якщо `parsed.intent == "event"` → уточнення НІКОЛИ не показується, навіть якщо AI повернув `needs_clarification=True`:
 ```python
@@ -489,6 +501,28 @@ event_category (тільки для intent=event)
   "search_text": "Kilhouse"           // ILIKE по назві/опису
 }
 ```
+
+##### Як працює поле `city`
+Пріоритет вибору міста в `_do_direct_search`:
+```
+1. "city" у direct_params кнопки   ← hardcode, найвищий пріоритет
+2. user_city у FSM state           ← збережений вибір міста юзера
+3. null                            ← шукає по всіх містах
+```
+
+**Коли вказувати `"city"` у кнопці:**
+- Якщо кнопка завжди має шукати в конкретному місті незалежно від вибору юзера
+- Наприклад, кнопка "Що у кіно?" під містом Дніпро: `{"intent":"event","category":"кіно","ask_date":true,"city":"Дніпро"}`
+
+**Коли НЕ вказувати `"city"` (залишити null / не додавати поле):**
+- Якщо кнопка знаходиться під кнопкою `select_city` → місто береться автоматично з `user_city` (FSM)
+- Це дозволяє перевикористовувати одні й ті ж кнопки для різних міст
+
+**Значення для фільтрації** (використовується `ILIKE`):
+- `"Дніпро"` → знайде "Дніпро", "Дніпропетровськ"
+- `"Київ"` → тільки Київ
+- `null` або відсутнє поле → всі міста
+
 - `ask_date: true` → зберігає `{**params, "label": btn.display}` як `pending_search_params` у FSM → встановлює `MenuSearch.waiting_date_pick` → показує `_date_picker_keyboard()` (Сьогодні / Вихідні / Тиждень / Місяць / Календар / Всі події)
 - Після вибору дати → `_exec_pending_search()` відновлює params з FSM і виконує пошук
 - **Не використовувати `ask_date` разом з `date_filter`** — вони взаємовиключні
@@ -832,3 +866,7 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 | ask_city=true in direct_params — city picker before search | ✅ |
 | Calendar date search fix — specific_date passed as datetime.date to asyncpg | ✅ |
 | Menu root structure fix — select_city и menu items at same root level | ✅ |
+| Multi-city navigation — city home submenu with "🗺 Обрати місто" button | ✅ |
+| menu_stack preserved across FSM clears (Back works after date/search) | ✅ |
+| user_home_parent_id persistent key — city home level detection | ✅ |
+| cmd_start + callback_main_menu redirect to city home if city already chosen | ✅ |
