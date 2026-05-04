@@ -9,7 +9,7 @@ from db.menu_buttons import MenuButton, load_all_buttons
 
 CACHE_TTL = 30          # seconds — changes propagate within 30 sec
 BACK_BUTTON = "⬅️ Назад"
-CITY_SELECT_BUTTON = "🗺 Вибір міста"
+CITY_SELECT_BUTTON = "🗺 Обрати місто"
 
 _cache: list[MenuButton] = []
 _loaded_at: float = 0.0
