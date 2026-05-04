@@ -4,7 +4,7 @@ FSM helpers — shared utilities for all handlers.
 from aiogram.fsm.context import FSMContext
 
 # Keys that survive state.clear() — persistent user preferences
-_PERSISTENT_KEYS = {"user_city"}
+_PERSISTENT_KEYS = {"user_city", "user_home_parent_id"}
 
 
 async def preserve_clear(state: FSMContext) -> None:

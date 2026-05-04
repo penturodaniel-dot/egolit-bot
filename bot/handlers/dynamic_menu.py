@@ -14,8 +14,9 @@ from aiogram.fsm.context import FSMContext
 
 from bot.menu_cache import (
     ensure_loaded, find_button, get_button_by_id,
-    sub_menu_keyboard, main_menu_keyboard, main_menu_keyboard_for_state,
-    BACK_BUTTON, _children,
+    sub_menu_keyboard, sub_menu_keyboard_city_home,
+    main_menu_keyboard, main_menu_keyboard_for_state,
+    BACK_BUTTON, CITY_SELECT_BUTTON, _children,
 )
 from bot.states import SearchFlow, MenuSearch
 from bot.fsm_helpers import preserve_clear
@@ -43,36 +44,62 @@ async def handle_back(message: Message, state: FSMContext):
     await ensure_loaded()
     data = await state.get_data()
     stack: list[int] = data.get("menu_stack", [])
+    home_parent_id: int | None = data.get("user_home_parent_id")
 
-    if len(stack) <= 1:
-        # At level 1 or root — go to main menu
-        await state.update_data(menu_stack=[])
-        data = await state.get_data()
-        city = data.get("user_city")
-        city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
+    if not stack:
+        # Already at root — show city selection
         await message.answer(
-            f"🏠 Головне меню{city_line}\n\nОбери категорію:",
-            reply_markup=await main_menu_keyboard_for_state(state),
-            parse_mode="HTML",
+            "🗺 Оберіть місто:",
+            reply_markup=main_menu_keyboard(hide_city=False),
         )
-    else:
-        # Pop current level, go to parent's parent
-        stack = stack[:-1]
-        await state.update_data(menu_stack=stack)
-        parent_id = stack[-1] if stack else None
-        if parent_id is None:
-            data2 = await state.get_data()
-            city2 = data2.get("user_city")
-            city_line2 = f"\n📍 Місто: <b>{city2}</b>" if city2 else ""
+        return
+
+    # Pop current submenu from stack
+    prev_id = stack[-1]
+    stack = stack[:-1]
+    await state.update_data(menu_stack=stack)
+
+    if not stack:
+        # Reached root after pop
+        if home_parent_id and prev_id == home_parent_id:
+            # Came from city's home → show city selection
             await message.answer(
-                f"🏠 Головне меню{city_line2}\n\nОбери категорію:",
+                "🗺 Оберіть місто:",
+                reply_markup=main_menu_keyboard(hide_city=False),
+            )
+        else:
+            # No city context — normal main menu
+            data2 = await state.get_data()
+            city = data2.get("user_city")
+            city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
+            await message.answer(
+                f"🏠 Головне меню{city_line}\n\nОбери категорію:",
                 reply_markup=await main_menu_keyboard_for_state(state),
                 parse_mode="HTML",
             )
+    else:
+        # Navigate to parent submenu
+        parent_id = stack[-1]
+        parent_btn = get_button_by_id(parent_id)
+        label = parent_btn.display if parent_btn else "Оберіть варіант:"
+        if home_parent_id and parent_id == home_parent_id:
+            # Parent is city's home — show with "Вибір міста" button
+            await message.answer(label, reply_markup=sub_menu_keyboard_city_home(parent_id))
         else:
-            parent_btn = get_button_by_id(parent_id)
-            label = parent_btn.display if parent_btn else "Оберіть варіант:"
             await message.answer(label, reply_markup=sub_menu_keyboard(parent_id))
+
+
+# ── "Вибір міста" button — return to city selection ───────────────────────
+
+@router.message(F.text == CITY_SELECT_BUTTON)
+async def handle_city_select_button(message: Message, state: FSMContext):
+    """User pressed '🗺 Вибір міста' — clear city and return to city selection."""
+    await ensure_loaded()
+    await state.update_data(menu_stack=[], user_home_parent_id=None, user_city=None)
+    await message.answer(
+        "🗺 Оберіть місто:",
+        reply_markup=main_menu_keyboard(hide_city=False),
+    )
 
 
 # ── Dynamic button dispatcher ─────────────────────────────────────────────
@@ -145,22 +172,22 @@ async def _do_select_city(message: Message, state: FSMContext, btn):
 
     await state.update_data(user_city=city)
 
-    # If button has children — navigate into submenu (same as submenu action)
-    from bot.menu_cache import _children, sub_menu_keyboard
+    # If button has children — navigate into city's home submenu
     if _children(btn.id):
         data = await state.get_data()
         stack: list[int] = data.get("menu_stack", [])
         stack = stack + [btn.id]
-        await state.update_data(menu_stack=stack)
+        # Save home parent so Back navigation knows this is city's home level
+        await state.update_data(menu_stack=stack, user_home_parent_id=btn.id)
         await message.answer(
             f"📍 Місто: <b>{city}</b>\n\nОберіть варіант:",
-            reply_markup=sub_menu_keyboard(btn.id),
+            reply_markup=sub_menu_keyboard_city_home(btn.id),
             parse_mode="HTML",
         )
     else:
         await message.answer(
             f"📍 Місто збережено: <b>{city}</b>\n\nВсі пошуки тепер відображатимуть результати для цього міста.",
-            reply_markup=await main_menu_keyboard_for_state(state),
+            reply_markup=main_menu_keyboard(hide_city=False),
             parse_mode="HTML",
         )
 

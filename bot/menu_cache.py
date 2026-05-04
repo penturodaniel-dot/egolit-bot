@@ -9,6 +9,7 @@ from db.menu_buttons import MenuButton, load_all_buttons
 
 CACHE_TTL = 30          # seconds — changes propagate within 30 sec
 BACK_BUTTON = "⬅️ Назад"
+CITY_SELECT_BUTTON = "🗺 Вибір міста"
 
 _cache: list[MenuButton] = []
 _loaded_at: float = 0.0
@@ -89,6 +90,17 @@ async def main_menu_keyboard_for_state(state) -> ReplyKeyboardMarkup:
 def sub_menu_keyboard(parent_id: int) -> ReplyKeyboardMarkup:
     rows = _buttons_to_rows(_children(parent_id))
     rows.append([KeyboardButton(text=BACK_BUTTON)])
+    return ReplyKeyboardMarkup(
+        keyboard=rows,
+        resize_keyboard=True,
+        input_field_placeholder="Оберіть або напишіть...",
+    )
+
+
+def sub_menu_keyboard_city_home(parent_id: int) -> ReplyKeyboardMarkup:
+    """City's home submenu — shows '🗺 Вибір міста' instead of '⬅️ Назад'."""
+    rows = _buttons_to_rows(_children(parent_id))
+    rows.append([KeyboardButton(text=CITY_SELECT_BUTTON)])
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,

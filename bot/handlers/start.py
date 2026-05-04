@@ -2,7 +2,10 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from bot.menu_cache import ensure_loaded, main_menu_keyboard, main_menu_keyboard_for_state, reload_buttons
+from bot.menu_cache import (
+    ensure_loaded, main_menu_keyboard, main_menu_keyboard_for_state,
+    sub_menu_keyboard_city_home, reload_buttons,
+)
 from bot.fsm_helpers import preserve_clear
 
 router = Router()
@@ -32,11 +35,25 @@ async def cmd_start(message: Message, state: FSMContext):
         except Exception:
             pass
 
-    await message.answer(
-        WELCOME_TEXT,
-        reply_markup=main_menu_keyboard(),
-        parse_mode="HTML",
-    )
+    data = await state.get_data()
+    home_parent_id = data.get("user_home_parent_id")
+    city = data.get("user_city")
+
+    if home_parent_id and city:
+        # User already has a city — go straight to city's home submenu
+        await ensure_loaded()
+        await state.update_data(menu_stack=[home_parent_id])
+        await message.answer(
+            f"👋 З поверненням!\n📍 Місто: <b>{city}</b>\n\nОберіть варіант:",
+            reply_markup=sub_menu_keyboard_city_home(home_parent_id),
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            WELCOME_TEXT,
+            reply_markup=main_menu_keyboard(hide_city=False),
+            parse_mode="HTML",
+        )
 
 
 @router.callback_query(F.data == "main_menu")
@@ -44,11 +61,20 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     await preserve_clear(state)
     await ensure_loaded()
     data = await state.get_data()
+    home_parent_id = data.get("user_home_parent_id")
     city = data.get("user_city")
-    city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
-    await callback.message.answer(
-        f"🏠 Головне меню{city_line}\n\nОбери категорію:",
-        reply_markup=await main_menu_keyboard_for_state(state),
-        parse_mode="HTML",
-    )
+
+    if home_parent_id and city:
+        # City selected — go to city's home submenu
+        await state.update_data(menu_stack=[home_parent_id])
+        await callback.message.answer(
+            f"📍 Місто: <b>{city}</b>\n\nОберіть варіант:",
+            reply_markup=sub_menu_keyboard_city_home(home_parent_id),
+            parse_mode="HTML",
+        )
+    else:
+        await callback.message.answer(
+            "🗺 Оберіть місто:",
+            reply_markup=main_menu_keyboard(hide_city=False),
+        )
     await callback.answer()
