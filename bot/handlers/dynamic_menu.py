@@ -109,6 +109,46 @@ async def handle_dynamic_button(message: Message, bot: Bot, state: FSMContext):
         )
         return
 
+    if btn.action_type == "select_city":
+        await _do_select_city(message, state, btn)
+        return
+
+
+# ── Select city (saves user_city to FSM, then opens submenu if exists) ───────
+
+async def _do_select_city(message: Message, state: FSMContext, btn):
+    """Save city preference to FSM state, then open submenu if button has children."""
+    city = None
+    if btn.direct_params:
+        try:
+            city = json.loads(btn.direct_params).get("city")
+        except Exception:
+            pass
+
+    if not city:
+        city = btn.label  # fallback: use the button label as city name
+
+    await state.update_data(user_city=city)
+
+    # If button has children — navigate into submenu (same as submenu action)
+    from bot.menu_cache import _children, sub_menu_keyboard
+    if _children(btn.id):
+        data = await state.get_data()
+        stack: list[int] = data.get("menu_stack", [])
+        stack = stack + [btn.id]
+        await state.update_data(menu_stack=stack)
+        await message.answer(
+            f"📍 Місто: <b>{city}</b>\n\nОберіть варіант:",
+            reply_markup=sub_menu_keyboard(btn.id),
+            parse_mode="HTML",
+        )
+    else:
+        await message.answer(
+            f"📍 Місто збережено: <b>{city}</b>\n\nВсі пошуки тепер відображатимуть результати для цього міста.",
+            reply_markup=main_menu_keyboard(),
+            parse_mode="HTML",
+        )
+
 
 # ── Direct search (no AI parsing) ────────────────────────────────────────
 

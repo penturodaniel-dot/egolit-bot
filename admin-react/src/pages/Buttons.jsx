@@ -6,6 +6,7 @@ const ACTION_TYPES = [
   { value: 'ai_search',     label: '🤖 AI пошук' },
   { value: 'direct_search', label: '🎯 Прямий пошук (JSON)' },
   { value: 'submenu',       label: '📂 Підменю' },
+  { value: 'select_city',   label: '📍 Місто' },
   { value: 'lead_form',     label: '📋 Форма заявки' },
   { value: 'custom_query',  label: '✍️ Свій запит' },
   { value: 'manager',       label: '📞 Менеджер' },
@@ -15,13 +16,14 @@ const ACTION_TYPES = [
 
 const EMPTY_FORM = {
   label: '', emoji: '', action_type: 'ai_search', ai_prompt: '',
-  parent_id: '', position: 0, direct_params: '',
+  parent_id: '', position: 0, direct_params: '', city_value: '',
 };
 
 // ── Documentation data ────────────────────────────────────────────────────
 
 const ACTION_DOCS = [
   { value: 'submenu',       icon: '📂', label: 'Підменю',               desc: 'Відкриває дочірні кнопки — будь-яка кількість рівнів. Дочірні кнопки додаються через "Батьківська кнопка" або кнопку "+ суб".' },
+  { value: 'select_city',  icon: '📍', label: 'Місто',                  desc: 'Зберігає місто за користувачем. Всі наступні пошуки без явного міста автоматично використовуватимуть збережене місто. Якщо є дочірні кнопки — відкриває підменю після збереження.' },
   { value: 'direct_search', icon: '🎯', label: 'Прямий пошук (JSON)',   desc: 'Виконує пошук відразу без AI. Параметри задаються у полі JSON нижче. Підтримує ask_date для інтерактивного вибору дати.' },
   { value: 'ai_search',     icon: '🤖', label: 'AI пошук',              desc: 'Передає AI-промт у движок. AI сам визначає категорію, дату, тип. Використовується рідко — краще direct_search.' },
   { value: 'custom_query',  icon: '✍️', label: 'Свій запит',            desc: 'Просить користувача ввести довільний текст, потім шукає через AI. Аналог вільного введення тексту.' },
@@ -298,6 +300,10 @@ export default function Buttons() {
   };
 
   const openEdit = (btn) => {
+    let city_value = '';
+    if (btn.action_type === 'select_city' && btn.direct_params) {
+      try { city_value = JSON.parse(btn.direct_params).city || ''; } catch {}
+    }
     setForm({
       label: btn.label || '',
       emoji: btn.emoji || '',
@@ -306,6 +312,7 @@ export default function Buttons() {
       parent_id: btn.parent_id ?? '',
       position: btn.position ?? 0,
       direct_params: btn.direct_params || '',
+      city_value,
     });
     setEditingId(btn.id);
     setShowModal(true);
@@ -320,7 +327,9 @@ export default function Buttons() {
         ...form,
         parent_id: form.parent_id !== '' ? Number(form.parent_id) : null,
         position: Number(form.position) || 0,
-        direct_params: form.direct_params.trim() || null,
+        direct_params: form.action_type === 'select_city'
+          ? (form.city_value.trim() ? JSON.stringify({ city: form.city_value.trim() }) : null)
+          : (form.direct_params.trim() || null),
       };
       if (editingId) {
         await updateButton(editingId, payload);
@@ -465,6 +474,23 @@ export default function Buttons() {
                 </div>
               )}
 
+              {form.action_type === 'select_city' && (
+                <div>
+                  <label className="field-label">Назва міста</label>
+                  <input
+                    className="field-input"
+                    value={form.city_value}
+                    onChange={f('city_value')}
+                    placeholder="Дніпро"
+                    required
+                  />
+                  <div style={{ fontSize: 11.5, color: 'var(--text-muted)', marginTop: 5, lineHeight: 1.6 }}>
+                    При кліку на цю кнопку місто зберігається за користувачем і використовується у всіх подальших пошуках.
+                    Якщо у кнопки є дочірні кнопки — відкриває підменю після збереження.
+                  </div>
+                </div>
+              )}
+
               {form.action_type === 'direct_search' && (
                 <div>
                   <label className="field-label">Параметри пошуку (JSON)</label>
@@ -538,6 +564,7 @@ export default function Buttons() {
         .btn-type { font-size: 11.5px; color: var(--text-muted); background: var(--bg); border-radius: 4px; padding: 2px 7px; }
         .btn-type-direct { font-size: 11.5px; color: #fff; background: #7c3aed; border-radius: 4px; padding: 2px 7px; }
         .btn-type-submenu { font-size: 11.5px; color: #fff; background: #0284c7; border-radius: 4px; padding: 2px 7px; }
+        .btn-type-city { font-size: 11.5px; color: #fff; background: #059669; border-radius: 4px; padding: 2px 7px; }
         .btn-action-sm { padding: 5px 11px; border: 1.5px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; background: #fff; color: var(--text-secondary); transition: all .15s; }
         .btn-action-sm:hover { border-color: var(--accent); color: var(--accent); }
         .btn-action-sm.danger:hover { border-color: #dc2626; color: #dc2626; }
@@ -562,6 +589,7 @@ function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild, level
   const badgeClass =
     btn.action_type === 'direct_search' ? 'btn-type-direct' :
     btn.action_type === 'submenu' ? 'btn-type-submenu' :
+    btn.action_type === 'select_city' ? 'btn-type-city' :
     'btn-type';
   const badgeLabel = actionType?.label || btn.action_type;
 
