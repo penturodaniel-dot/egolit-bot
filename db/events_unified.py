@@ -225,6 +225,7 @@ async def search_crm_events(
     search_text: str | None = None,
     category: str | None = None,
     date_filter: str | None = None,
+    specific_date: str | None = None,
     city: str | None = None,
     limit: int = 5,
     offset: int = 0,
@@ -235,7 +236,11 @@ async def search_crm_events(
     where = ["is_published = TRUE"]
     params: list = []
 
-    if date_filter == "today":
+    if specific_date:
+        # Exact date picked from calendar (YYYY-MM-DD)
+        where.append(f"date = ${len(params)+1}::date")
+        params.append(specific_date)
+    elif date_filter == "today":
         where.append("date = CURRENT_DATE")
     elif date_filter == "weekend":
         where.append(

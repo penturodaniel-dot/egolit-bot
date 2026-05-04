@@ -115,12 +115,14 @@ async def search_karabas_events(
     date_filter: str | None = None,
     search_text: str | None = None,
     city: str | None = None,
+    specific_date: str | None = None,
 ) -> list[EventResult]:
     """Search events from CRM unified events table only."""
     rows = await search_crm_events(
         search_text=search_text,
         category=category,
         date_filter=date_filter,
+        specific_date=specific_date,
         city=city,
         limit=limit,
         offset=offset,
@@ -134,12 +136,14 @@ async def search_kino_events(
     date_filter: str | None = None,
     search_text: str | None = None,
     city: str | None = None,
+    specific_date: str | None = None,
 ) -> list[EventResult]:
     """Search cinema events from CRM unified events table."""
     rows = await search_crm_events(
         search_text=search_text,
         category="кіно",
         date_filter=date_filter,
+        specific_date=specific_date,
         city=city,
         limit=limit,
         offset=offset,

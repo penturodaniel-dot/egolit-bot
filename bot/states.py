@@ -8,6 +8,10 @@ class SearchFlow(StatesGroup):
     waiting_budget = State()    # clarification: pick budget range
 
 
+class MenuSearch(StatesGroup):
+    waiting_date_pick = State()  # date picker calendar after menu button with ask_date=true
+
+
 class LeadFlow(StatesGroup):
     waiting_name = State()
     waiting_phone = State()

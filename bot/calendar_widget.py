@@ -88,3 +88,46 @@ def build_calendar(year: int, month: int) -> InlineKeyboardMarkup:
     ])
 
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def build_date_picker_calendar(year: int, month: int) -> InlineKeyboardMarkup:
+    """Calendar variant for menu date picker — last row has 'Back' instead of lead buttons."""
+    today = date.today()
+    prev_y, prev_m, next_y, next_m = _prev_next(year, month)
+    can_prev = (prev_y, prev_m) >= (today.year, today.month)
+    rows = []
+
+    rows.append([
+        InlineKeyboardButton(
+            text="◀️" if can_prev else " ",
+            callback_data=f"CAL:G:{prev_y}:{prev_m}" if can_prev else IGN,
+        ),
+        InlineKeyboardButton(text=f"{MONTHS_UA[month]} {year}", callback_data=IGN),
+        InlineKeyboardButton(text="▶️", callback_data=f"CAL:G:{next_y}:{next_m}"),
+    ])
+    rows.append([
+        InlineKeyboardButton(text=d, callback_data=IGN) for d in DAYS_UA
+    ])
+    for week in calendar.monthcalendar(year, month):
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(text=" ", callback_data=IGN))
+                continue
+            d = date(year, month, day)
+            if d < today:
+                row.append(InlineKeyboardButton(text="·", callback_data=IGN))
+            elif d == today:
+                row.append(InlineKeyboardButton(
+                    text=f"🟢{day}", callback_data=f"CAL:D:{year}:{month}:{day}",
+                ))
+            else:
+                row.append(InlineKeyboardButton(
+                    text=str(day), callback_data=f"CAL:D:{year}:{month}:{day}",
+                ))
+        rows.append(row)
+
+    rows.append([
+        InlineKeyboardButton(text="⬅️ Назад до дат", callback_data="dpick:back"),
+    ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
