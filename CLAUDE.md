@@ -33,36 +33,43 @@
 
 ### Корисні команди на сервері
 ```bash
-# Переглянути логи бота
+# Переглянути логи бота / адмін-панелі (один контейнер!)
 docker logs egolist_bot -f
 
-# Переглянути логи адмін-панелі
-docker logs egolist_admin -f
-
-# Перезапустити бот
+# Перезапустити
 docker compose -f /opt/egolist-bot/docker-compose.yml restart bot
 
-# Оновити після git push (rebuild + restart)
+# Оновити після git push (rebuild + restart) — для будь-яких змін (бот АБО фронтенд)
 cd /opt/egolist-bot && git pull && docker compose up -d --build bot
-
-# Оновити фронтенд (якщо змінився dist/)
-cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 
 # Статус контейнерів
 docker compose -f /opt/egolist-bot/docker-compose.yml ps
 ```
 
+> ⚠️ **docker-compose має лише один app-сервіс — `bot`** (не `admin`!).
+> Бот і адмін-панель запускаються в одному контейнері `egolist_bot`.
+> Команда `--build admin` поверне помилку "no such service: admin".
+
 ### Deploy workflow (замість Railway auto-deploy)
 ```bash
-# 1. Локально — внести зміни, збілдити фронт якщо треба
-cd admin-react && npm run build && cd ..
-
-# 2. Закомітити і запушити
+# ── Backend / bot changes ───────────────────────────────────
+# 1. Локально — внести зміни
 git add <files>
-git commit -m "feat: ..."
+git commit -m "feat: description"
 git push origin main
 
-# 3. На сервері — підтягнути і перезапустити
+# 2. На сервері:
+ssh root@91.239.234.193
+cd /opt/egolist-bot && git pull && docker compose up -d --build bot
+
+# ── Frontend (React) changes ────────────────────────────────
+# 1. Збілдити локально:
+cd admin-react && npm run build && cd ..
+git add admin-react/dist/ admin-react/src/
+git commit -m "feat: description"
+git push origin main
+
+# 2. На сервері (той самий сервіс!):
 ssh root@91.239.234.193
 cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 ```
@@ -77,9 +84,10 @@ egolist-bot/
 │   │   ├── lead.py           # Lead flow: name/phone/category/budget/date/people/details
 │   │   └── human.py          # Human mode + "🚪 Вийти з чату" button + chat_sessions sync
 │   ├── middleware.py         # ChatPersistenceMiddleware — saves all incoming msgs to DB
-│   ├── menu_cache.py         # 30s TTL cache for dynamic buttons
+│   ├── menu_cache.py         # 30s TTL cache for dynamic buttons + get_button_by_id()
 │   ├── keyboards.py          # Inline keyboards (results_keyboard, manager_choice_keyboard, etc.)
-│   └── states.py             # FSM states: SearchFlow, LeadFlow (7 steps)
+│   ├── calendar_widget.py    # Inline calendar: build_calendar() + build_date_picker_calendar()
+│   └── states.py             # FSM states: SearchFlow, MenuSearch, LeadFlow
 ├── admin/
 │   └── main.py               # FastAPI: JSON API + serves React SPA from dist/
 │                             # POST /api/upload-image — зберігає файл у /app/uploads/
@@ -445,6 +453,88 @@ event_category (тільки для intent=event)
   ```
   Наприклад: "Поговорити з менеджером" → "Чат з менеджером" (`action_type='manager'`)
 
+### Dynamic menu — архітектура (3 рівні + навігація)
+
+#### Типи дій кнопок (`action_type`)
+| Тип | Поведінка |
+|-----|-----------|
+| `submenu` | Відкриває дочірні кнопки. Пушить `btn.id` у `menu_stack` в FSM state |
+| `direct_search` | Виконує DB-пошук напряму за JSON з поля `direct_params` — **без AI** |
+| `ai_search` | Передає `ai_prompt` у `_do_search()` — з AI parsing |
+| `custom_query` | Просить користувача ввести запит (встановлює `SearchFlow.waiting_query`) |
+| `lead_form` | Запускає 7-крокову LeadFlow |
+| `manager` | Показує `manager_choice_keyboard()` (заявка або живий чат) |
+
+#### Навігаційний стек (`menu_stack`)
+- Зберігається в FSM state як `list[int]` (список `btn.id` батьків)
+- При кліку `submenu` → `stack.append(btn.id)` → `update_data(menu_stack=stack)`
+- При натисканні ◀️ Назад → `stack.pop()` → якщо `len(stack) <= 1` → головне меню
+- `get_button_by_id(id)` у `bot/menu_cache.py` — пошук кнопки по id в кеші
+
+#### `direct_search` — JSON параметри (`direct_params` в DB)
+```json
+{
+  "intent":      "event" | "service",
+  "category":    "концерти",          // для intent=event (один рядок)
+  "categories":  ["ведучі","..."],    // для intent=service (масив)
+  "date_filter": "today"|"weekend"|"week"|"month"|null,
+  "ask_date":    true,                // показати date picker перед пошуком
+  "city":        "Дніпро",            // фільтр по місту (ILIKE), null = всі
+  "search_text": "Kilhouse"           // ILIKE по назві/опису
+}
+```
+- `ask_date: true` → зберігає `{**params, "label": btn.display}` як `pending_search_params` у FSM → встановлює `MenuSearch.waiting_date_pick` → показує `_date_picker_keyboard()` (Сьогодні / Вихідні / Тиждень / Місяць / Календар / Всі події)
+- Після вибору дати → `_exec_pending_search()` відновлює params з FSM і виконує пошук
+- **Не використовувати `ask_date` разом з `date_filter`** — вони взаємовиключні
+
+#### FSM стани (`bot/states.py`)
+```python
+class SearchFlow(StatesGroup):
+    waiting_query    = State()  # custom_query — чекає введення тексту
+    waiting_date     = State()  # AI clarification: вибір дати
+    waiting_category = State()  # AI clarification: вибір категорії
+    waiting_budget   = State()  # AI clarification: вибір бюджету
+
+class MenuSearch(StatesGroup):
+    waiting_date_pick = State()  # date picker після кнопки з ask_date=true
+
+class LeadFlow(StatesGroup):
+    # 7 кроків lead flow
+```
+
+#### Inline calendar (`bot/calendar_widget.py`)
+- `build_calendar(year, month)` — для lead flow (остання кнопка "⏭ Пропустити" / "❌ Скасувати")
+- `build_date_picker_calendar(year, month)` — для date picker меню (остання кнопка "⬅️ Назад до дат" → `dpick:back`)
+- Callback формати:
+  - `CAL:IGN` — ігнорувати (минулий день, заголовок, порожня комірка)
+  - `CAL:G:{y}:{m}` — навігація по місяцях
+  - `CAL:D:{y}:{m}:{d}` — вибір конкретної дати
+- У `dynamic_menu.py` callback handlers скоуповані фільтром `MenuSearch.waiting_date_pick` — не конфліктують з lead flow
+
+#### Відключення вільного тексту
+Бот більше не приймає довільні повідомлення як пошукові запити.
+`handle_free_text` у `bot/handlers/search.py` (якщо не human mode і не FSM-стан):
+```python
+await message.answer(
+    "👇 Оберіть із меню або скористайтесь кнопкою «✍️ Свій запит»:",
+    reply_markup=main_menu_keyboard(),
+)
+```
+Виняток: `SearchFlow.waiting_query` (custom_query) і human mode — ці стани перехоплюють текст раніше.
+
+### Admin panel — Buttons page (Кнопки)
+- Сторінка `admin-react/src/pages/Buttons.jsx`
+- Дерево кнопок: 3 рівні (корінь → підменю → листя), мітки "↳ підкнопка" / "↳↳ рівень 3"
+- Бейджи кольорові: `direct_search` = фіолетовий, `submenu` = синій, решта = сірий
+- Кнопка `+ суб` на рядку — швидке додавання дочірньої кнопки
+- **📖 Документація** — collapsible панель (завжди на сторінці, згорнута за замовчуванням):
+  - Структура меню (3 рівні)
+  - Всі 8 типів дій з описами
+  - Таблиця JSON-параметрів `direct_search`
+  - Категорії подій (12) і виконавців (38) у вигляді пілюль
+  - 9 готових JSON-прикладів з кнопкою 📋 Копіювати
+  - Швидкий гайд "як додати кнопку"
+
 ### Seed data (наповнення бази)
 - `scrapers/seed.py` → `seed_karabas_events()` + `seed_egolist_performers(per_category=10)`
 - Запускаються через адмін-панель: Афіша → "🎟 Seed з Karabas", Виконавці → "🎤 Seed з Egolist"
@@ -599,27 +689,29 @@ AI_MODEL=gpt-5-mini
 ## Deploy workflow (VPS hostpro.ua)
 
 > Railway більше не використовується. Авто-деплою немає — після push треба вручну підтягнути на сервері.
+> ⚠️ Єдиний app-сервіс у docker-compose — `bot`. Команда `--build admin` не працює (no such service).
 
 ```bash
-# 1. Backend/bot changes — локально:
+# ── Backend / bot changes ───────────────────────────────────
+# 1. Локально:
 git add <files>
 git commit -m "feat: description"
 git push origin main
 
-# 2. На сервері підтягнути і перезапустити:
+# 2. На сервері:
 ssh root@91.239.234.193
 cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 
-# ───────────────────────────────────────────
-# Frontend (React) changes — спочатку білд локально:
+# ── Frontend (React) changes ────────────────────────────────
+# 1. Збілдити локально та закомітити dist/:
 cd admin-react && npm run build && cd ..
-git add admin-react/dist/
+git add admin-react/dist/ admin-react/src/
 git commit -m "feat: description"
 git push origin main
 
-# Потім на сервері:
+# 2. На сервері (той самий сервіс bot!):
 ssh root@91.239.234.193
-cd /opt/egolist-bot && git pull && docker compose up -d --build admin
+cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 ```
 
 ## Known bugs fixed
@@ -693,3 +785,11 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build admin
 | Lead form — hides sticky Telegram keyboard (ReplyKeyboardRemove) | ✅ |
 | Button rename "Поговорити з менеджером" → "Чат з менеджером" + DB migration | ✅ |
 | Null-safe CRUD: (body.get("field") or "").strip() in all 4 endpoints | ✅ |
+| Multi-level menu (3 levels) with FSM navigation stack (menu_stack) | ✅ |
+| direct_search action type — DB search bypassing AI, JSON params in DB | ✅ |
+| Free text disabled — redirects to menu (except custom_query state + human mode) | ✅ |
+| Date picker for menu buttons (ask_date=true) — inline keyboard with 5 options | ✅ |
+| Calendar integration for menu date picker (build_date_picker_calendar) | ✅ |
+| City filter in direct_search JSON params | ✅ |
+| MenuSearch FSM state — scopes calendar callbacks, no conflict with lead flow | ✅ |
+| Buttons page self-serve documentation panel (📖 collapsible, 9 JSON examples) | ✅ |
