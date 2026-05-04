@@ -3,6 +3,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from bot.menu_cache import ensure_loaded, main_menu_keyboard, reload_buttons
+from bot.fsm_helpers import preserve_clear
 
 router = Router()
 
@@ -15,7 +16,7 @@ WELCOME_TEXT = """👋 Привіт! Я — помічник <b>Egolist</b>.
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
-    await state.clear()
+    await preserve_clear(state)
     await reload_buttons()          # завжди свіжі кнопки при /start
 
     # Reset human mode — both old sessions table and new chat_sessions
@@ -40,7 +41,7 @@ async def cmd_start(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "main_menu")
 async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
+    await preserve_clear(state)
     await ensure_loaded()
     await callback.message.answer(
         "🏠 Головне меню\n\nОбери категорію або напиши запит:",

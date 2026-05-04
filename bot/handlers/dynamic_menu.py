@@ -17,6 +17,7 @@ from bot.menu_cache import (
     sub_menu_keyboard, main_menu_keyboard, BACK_BUTTON, _children,
 )
 from bot.states import SearchFlow, MenuSearch
+from bot.fsm_helpers import preserve_clear
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -132,8 +133,22 @@ async def _do_direct_search(message: Message, bot: Bot, state: FSMContext, btn):
     categories = params.get("categories", [])
     date_filter = params.get("date_filter")
     search_text = params.get("search_text")
-    city = params.get("city") or None
     ask_date = params.get("ask_date", False)
+    ask_city = params.get("ask_city", False)
+
+    # city: explicit in params → fallback to user's saved city
+    data = await state.get_data()
+    city = params.get("city") or data.get("user_city") or None
+
+    # If ask_city=true — show city picker before searching
+    if ask_city:
+        await state.update_data(pending_search_params={**params, "label": btn.display})
+        await state.set_state(MenuSearch.waiting_city_pick)
+        await message.answer(
+            f"{btn.display}\n\nОберіть місто:",
+            reply_markup=_city_picker_keyboard(),
+        )
+        return
 
     # If ask_date=true — show date picker inline keyboard instead of searching now
     if ask_date:
@@ -259,6 +274,58 @@ def _date_picker_keyboard():
     ])
 
 
+# ── City picker keyboard ──────────────────────────────────────────────────────
+
+CITIES = ["Дніпро", "Київ", "Харків", "Одеса", "Запоріжжя", "Львів"]
+
+
+def _city_picker_keyboard():
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    rows = []
+    for i in range(0, len(CITIES), 2):
+        pair = CITIES[i:i + 2]
+        rows.append([
+            InlineKeyboardButton(text=f"📍 {c}", callback_data=f"cpick:{c}")
+            for c in pair
+        ])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+# ── City picker callback ───────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("cpick:"), MenuSearch.waiting_city_pick)
+async def callback_city_pick(callback: CallbackQuery, bot: Bot, state: FSMContext):
+    chosen_city = callback.data.split(":", 1)[1]
+    await callback.answer(f"📍 {chosen_city}")
+
+    # Update label to show city
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    data = await state.get_data()
+    params = data.get("pending_search_params", {})
+
+    # If button also has ask_date — chain into date picker
+    if params.get("ask_date"):
+        from datetime import date as _date
+        # Save city into pending params so _exec_pending_search picks it up
+        await state.update_data(
+            user_city=chosen_city,
+            pending_search_params={**params, "city": chosen_city},
+        )
+        await state.set_state(MenuSearch.waiting_date_pick)
+        await callback.message.answer(
+            f"📍 Місто: {chosen_city}\n\nОберіть дату:",
+            reply_markup=_date_picker_keyboard(),
+        )
+        return
+
+    # No ask_date — execute search immediately
+    await _exec_pending_search(callback, bot, state, chosen_city=chosen_city)
+
+
 # ── Execute search from saved params + chosen date ────────────────────────────
 
 async def _exec_pending_search(
@@ -267,21 +334,29 @@ async def _exec_pending_search(
     state: FSMContext,
     date_filter: str | None = None,
     specific_date: str | None = None,
+    chosen_city: str | None = None,
 ):
-    """Load pending_search_params from state and run the search with chosen date."""
+    """Load pending_search_params from state and run the search with chosen date/city."""
     from bot.handlers.search import _send_results
     from db.queries import search_karabas_events, search_kino_events, search_products
     from ai.rerank import rerank_and_explain, CANDIDATE_FETCH
 
     data = await state.get_data()
     params = data.get("pending_search_params", {})
-    await state.clear()
+
+    # city priority: chosen interactively > hardcoded in button JSON > user's saved preference
+    city = chosen_city or params.get("city") or data.get("user_city") or None
+
+    # Persist chosen city for future searches
+    if chosen_city:
+        await state.update_data(user_city=chosen_city)
+
+    await preserve_clear(state)
 
     intent = params.get("intent", "event")
     category = params.get("category")
     categories = params.get("categories", [])
     search_text = params.get("search_text")
-    city = params.get("city") or None
 
     # Use date from JSON if no date chosen interactively
     if not date_filter and not specific_date:

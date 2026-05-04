@@ -17,6 +17,7 @@ from db.chat import get_session_by_user, save_outgoing_message
 from bot.keyboards import results_keyboard, manager_choice_keyboard
 from bot.calendar_widget import build_calendar, IGN
 from bot.states import SearchFlow
+from bot.fsm_helpers import preserve_clear
 
 
 # ── Clarification keyboards ────────────────────────────────────────────────
@@ -528,7 +529,7 @@ async def _do_search(message: Message, bot: Bot, state: FSMContext, user_text: s
 
 @router.message(SearchFlow.waiting_query)
 async def handle_free_query_state(message: Message, bot: Bot, state: FSMContext):
-    await state.clear()
+    await preserve_clear(state)
     await _do_search(message, bot, state, message.text)
 
 
@@ -711,7 +712,7 @@ async def clarif_calendar_day(callback: CallbackQuery, bot: Bot, state: FSMConte
         pass
     data = await state.get_data()
     query = data.get("last_query", "")
-    await state.clear()
+    await preserve_clear(state)
     await _do_search(callback.message, bot, state, f"{query}, дата {date_str}",
                      skip_clarification=True)
 
@@ -739,7 +740,7 @@ async def clarif_category_chosen(callback: CallbackQuery, bot: Bot, state: FSMCo
         pass
     data = await state.get_data()
     query = data.get("last_query", "")
-    await state.clear()
+    await preserve_clear(state)
     await _do_search(callback.message, bot, state, f"{label}: {query}",
                      skip_clarification=True)
 
@@ -769,6 +770,6 @@ async def clarif_budget_chosen(callback: CallbackQuery, bot: Bot, state: FSMCont
     query = data.get("last_query", "")
     if max_price:
         await state.update_data(last_max_price=max_price)
-    await state.clear()
+    await preserve_clear(state)
     await _do_search(callback.message, bot, state, f"{query}, бюджет {label}",
                      skip_clarification=True)

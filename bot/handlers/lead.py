@@ -10,6 +10,7 @@ import httpx
 from bot.keyboards import lead_cancel_keyboard, back_to_menu_keyboard, manager_choice_keyboard
 from bot.menu_cache import main_menu_keyboard
 from bot.states import LeadFlow
+from bot.fsm_helpers import preserve_clear
 from db.connection import get_pool
 from db.settings import get_notification_chat_id, get_notification_enabled, get_manager_online
 from config import settings
@@ -205,14 +206,14 @@ async def callback_start_chat(callback: CallbackQuery, bot: Bot, state: FSMConte
         return
 
     from bot.handlers.human import activate_human_mode
-    await state.clear()
+    await preserve_clear(state)
     await activate_human_mode(callback.message.chat.id, callback.from_user, bot)
     await callback.answer()
 
 
 @router.callback_query(F.data == "cancel_lead")
 async def callback_cancel_lead(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
+    await preserve_clear(state)
     await callback.message.answer(
         "Скасовано. Чим ще можу допомогти?",
         reply_markup=main_menu_keyboard(),
@@ -414,7 +415,7 @@ async def _submit_lead(message: Message, state: FSMContext):
         budget=lead_budget, date=lead_date, people=lead_people,
     )
 
-    await state.clear()
+    await preserve_clear(state)
     await message.answer(
         "✅ <b>Заявку прийнято!</b>\n\n"
         "Менеджер зв'яжеться з тобою найближчим часом.\n\n"

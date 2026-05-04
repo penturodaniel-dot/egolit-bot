@@ -9,6 +9,7 @@ class SearchFlow(StatesGroup):
 
 
 class MenuSearch(StatesGroup):
+    waiting_city_pick = State()  # city picker after menu button with ask_city=true
     waiting_date_pick = State()  # date picker calendar after menu button with ask_date=true
 
 
