@@ -8,7 +8,7 @@ from bot.calendar_widget import build_calendar, IGN
 import logging
 import httpx
 from bot.keyboards import lead_cancel_keyboard, back_to_menu_keyboard, manager_choice_keyboard
-from bot.menu_cache import main_menu_keyboard
+from bot.menu_cache import main_menu_keyboard, main_menu_keyboard_for_state
 from bot.states import LeadFlow
 from bot.fsm_helpers import preserve_clear
 from db.connection import get_pool
@@ -216,7 +216,7 @@ async def callback_cancel_lead(callback: CallbackQuery, state: FSMContext):
     await preserve_clear(state)
     await callback.message.answer(
         "Скасовано. Чим ще можу допомогти?",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=await main_menu_keyboard_for_state(state),
     )
     await callback.answer()
 
@@ -420,5 +420,5 @@ async def _submit_lead(message: Message, state: FSMContext):
         "✅ <b>Заявку прийнято!</b>\n\n"
         "Менеджер зв'яжеться з тобою найближчим часом.\n\n"
         "Чим ще можу допомогти?",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=await main_menu_keyboard_for_state(state),
     )

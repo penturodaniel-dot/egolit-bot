@@ -14,7 +14,8 @@ from aiogram.fsm.context import FSMContext
 
 from bot.menu_cache import (
     ensure_loaded, find_button, get_button_by_id,
-    sub_menu_keyboard, main_menu_keyboard, BACK_BUTTON, _children,
+    sub_menu_keyboard, main_menu_keyboard, main_menu_keyboard_for_state,
+    BACK_BUTTON, _children,
 )
 from bot.states import SearchFlow, MenuSearch
 from bot.fsm_helpers import preserve_clear
@@ -51,7 +52,7 @@ async def handle_back(message: Message, state: FSMContext):
         city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
         await message.answer(
             f"🏠 Головне меню{city_line}\n\nОбери категорію:",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_keyboard_for_state(state),
             parse_mode="HTML",
         )
     else:
@@ -65,7 +66,7 @@ async def handle_back(message: Message, state: FSMContext):
             city_line2 = f"\n📍 Місто: <b>{city2}</b>" if city2 else ""
             await message.answer(
                 f"🏠 Головне меню{city_line2}\n\nОбери категорію:",
-                reply_markup=main_menu_keyboard(),
+                reply_markup=await main_menu_keyboard_for_state(state),
                 parse_mode="HTML",
             )
         else:
@@ -159,7 +160,7 @@ async def _do_select_city(message: Message, state: FSMContext, btn):
     else:
         await message.answer(
             f"📍 Місто збережено: <b>{city}</b>\n\nВсі пошуки тепер відображатимуть результати для цього міста.",
-            reply_markup=main_menu_keyboard(),
+            reply_markup=await main_menu_keyboard_for_state(state),
             parse_mode="HTML",
         )
 

@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import CommandStart
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-from bot.menu_cache import ensure_loaded, main_menu_keyboard, reload_buttons
+from bot.menu_cache import ensure_loaded, main_menu_keyboard, main_menu_keyboard_for_state, reload_buttons
 from bot.fsm_helpers import preserve_clear
 
 router = Router()
@@ -48,7 +48,7 @@ async def callback_main_menu(callback: CallbackQuery, state: FSMContext):
     city_line = f"\n📍 Місто: <b>{city}</b>" if city else ""
     await callback.message.answer(
         f"🏠 Головне меню{city_line}\n\nОбери категорію:",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=await main_menu_keyboard_for_state(state),
         parse_mode="HTML",
     )
     await callback.answer()

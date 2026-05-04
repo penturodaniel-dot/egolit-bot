@@ -68,13 +68,22 @@ def _buttons_to_rows(buttons: list[MenuButton]) -> list[list[KeyboardButton]]:
     return rows
 
 
-def main_menu_keyboard() -> ReplyKeyboardMarkup:
-    rows = _buttons_to_rows(_root_buttons())
+def main_menu_keyboard(hide_city: bool = False) -> ReplyKeyboardMarkup:
+    buttons = _root_buttons()
+    if hide_city:
+        buttons = [b for b in buttons if b.action_type != "select_city"]
+    rows = _buttons_to_rows(buttons)
     return ReplyKeyboardMarkup(
         keyboard=rows,
         resize_keyboard=True,
         input_field_placeholder="Або напишіть запит вільно...",
     )
+
+
+async def main_menu_keyboard_for_state(state) -> ReplyKeyboardMarkup:
+    """Main menu keyboard — hides city buttons if user already has a city saved."""
+    data = await state.get_data()
+    return main_menu_keyboard(hide_city=bool(data.get("user_city")))
 
 
 def sub_menu_keyboard(parent_id: int) -> ReplyKeyboardMarkup:

@@ -544,10 +544,10 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
         except Exception:
             pass
     # Free text is disabled — redirect to menu
-    from bot.menu_cache import main_menu_keyboard
+    from bot.menu_cache import main_menu_keyboard_for_state
     await message.answer(
         "👇 Оберіть із меню або скористайтесь кнопкою «✍️ Свій запит»:",
-        reply_markup=main_menu_keyboard(),
+        reply_markup=await main_menu_keyboard_for_state(state),
     )
 
 
