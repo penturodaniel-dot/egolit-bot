@@ -275,12 +275,29 @@ export default function Buttons() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [expandedIds, setExpandedIds] = useState(new Set());
+
+  const toggleExpand = (id) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const expandAll = (btns) => {
+    const ids = btns.filter((b) => btns.some((c) => c.parent_id === b.id)).map((b) => b.id);
+    setExpandedIds(new Set(ids));
+  };
 
   const load = async () => {
     setLoading(true);
     try {
       const data = await getButtons();
       setButtons(data);
+      // auto-expand root nodes that have children
+      const ids = data.filter((b) => b.parent_id == null && data.some((c) => c.parent_id === b.id)).map((b) => b.id);
+      setExpandedIds(new Set(ids));
     } catch {
       setError('Помилка завантаження кнопок');
     } finally {
@@ -400,42 +417,100 @@ export default function Buttons() {
             <button className="btn-primary" onClick={() => openAdd(null)}>Додати першу кнопку</button>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {rootButtons.map((btn) => (
-              <div key={btn.id}>
-                <ButtonRow
-                  btn={btn}
-                  onEdit={openEdit}
-                  onToggle={handleToggle}
-                  onDelete={handleDelete}
-                  onAddChild={() => openAdd(btn.id)}
-                />
-                {childrenOf(btn.id).map((child) => (
-                  <div key={child.id} style={{ marginLeft: 32, marginTop: 6 }}>
-                    <ButtonRow
-                      btn={child}
-                      onEdit={openEdit}
-                      onToggle={handleToggle}
-                      onDelete={handleDelete}
-                      onAddChild={() => openAdd(child.id)}
-                      isChild
-                    />
-                    {childrenOf(child.id).map((grandchild) => (
-                      <div key={grandchild.id} style={{ marginLeft: 32, marginTop: 6 }}>
-                        <ButtonRow
-                          btn={grandchild}
-                          onEdit={openEdit}
-                          onToggle={handleToggle}
-                          onDelete={handleDelete}
-                          isChild
-                          level={3}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            ))}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {rootButtons.map((btn) => {
+              const level1Children = childrenOf(btn.id);
+              const hasL1 = level1Children.length > 0;
+              const isOpenL1 = expandedIds.has(btn.id);
+
+              return (
+                <div key={btn.id} style={{
+                  border: '1.5px solid var(--border)',
+                  borderRadius: 10,
+                  overflow: 'hidden',
+                  background: '#fff',
+                }}>
+                  {/* ── Root row ── */}
+                  <ButtonRow
+                    btn={btn}
+                    onEdit={openEdit}
+                    onToggle={handleToggle}
+                    onDelete={handleDelete}
+                    onAddChild={() => openAdd(btn.id)}
+                    hasChildren={hasL1}
+                    isExpanded={isOpenL1}
+                    onToggleExpand={hasL1 ? () => toggleExpand(btn.id) : null}
+                    childCount={level1Children.length}
+                    isAccordionRoot
+                  />
+
+                  {/* ── Level-1 children (accordion) ── */}
+                  {hasL1 && isOpenL1 && (
+                    <div style={{
+                      borderTop: '1px solid #f1f5f9',
+                      background: '#fafbfc',
+                      padding: '8px 12px 10px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                    }}>
+                      {level1Children.map((child) => {
+                        const level2Children = childrenOf(child.id);
+                        const hasL2 = level2Children.length > 0;
+                        const isOpenL2 = expandedIds.has(child.id);
+
+                        return (
+                          <div key={child.id} style={{
+                            border: '1px solid #e2e8f0',
+                            borderRadius: 8,
+                            overflow: 'hidden',
+                            background: '#fff',
+                          }}>
+                            {/* ── Level-1 row ── */}
+                            <ButtonRow
+                              btn={child}
+                              onEdit={openEdit}
+                              onToggle={handleToggle}
+                              onDelete={handleDelete}
+                              onAddChild={() => openAdd(child.id)}
+                              isChild
+                              hasChildren={hasL2}
+                              isExpanded={isOpenL2}
+                              onToggleExpand={hasL2 ? () => toggleExpand(child.id) : null}
+                              childCount={level2Children.length}
+                            />
+
+                            {/* ── Level-2 children (accordion) ── */}
+                            {hasL2 && isOpenL2 && (
+                              <div style={{
+                                borderTop: '1px solid #f1f5f9',
+                                background: '#f8fafc',
+                                padding: '6px 12px 8px',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 5,
+                              }}>
+                                {level2Children.map((grandchild) => (
+                                  <ButtonRow
+                                    key={grandchild.id}
+                                    btn={grandchild}
+                                    onEdit={openEdit}
+                                    onToggle={handleToggle}
+                                    onDelete={handleDelete}
+                                    isChild
+                                    level={3}
+                                  />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -558,7 +633,8 @@ export default function Buttons() {
         .field-label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 5px; }
         .field-input { width: 100%; padding: 9px 12px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); font-size: 13.5px; color: var(--text-primary); background: var(--bg); outline: none; box-sizing: border-box; }
         .field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(255,107,53,.1); background: #fff; }
-        .btn-row { display: flex; align-items: center; background: #fff; border-radius: var(--radius-sm); padding: 12px 16px; border: 1px solid var(--border); gap: 12px; }
+        .btn-row { display: flex; align-items: center; background: #fff; padding: 10px 14px; gap: 10px; }
+        .btn-row-root { padding: 12px 16px; }
         .btn-row-inactive { opacity: 0.55; }
         .btn-label { flex: 1; font-size: 14px; font-weight: 600; color: var(--text-primary); }
         .btn-type { font-size: 11.5px; color: var(--text-muted); background: var(--bg); border-radius: 4px; padding: 2px 7px; }
@@ -584,28 +660,61 @@ export default function Buttons() {
   );
 }
 
-function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild, level }) {
+function ButtonRow({ btn, onEdit, onToggle, onDelete, onAddChild, isChild, level,
+                      hasChildren, isExpanded, onToggleExpand, childCount, isAccordionRoot }) {
   const actionType = ACTION_TYPES.find((t) => t.value === btn.action_type);
   const badgeClass =
     btn.action_type === 'direct_search' ? 'btn-type-direct' :
-    btn.action_type === 'submenu' ? 'btn-type-submenu' :
-    btn.action_type === 'select_city' ? 'btn-type-city' :
+    btn.action_type === 'submenu'       ? 'btn-type-submenu' :
+    btn.action_type === 'select_city'   ? 'btn-type-city' :
     'btn-type';
   const badgeLabel = actionType?.label || btn.action_type;
 
   return (
-    <div className={`btn-row${btn.is_active ? '' : ' btn-row-inactive'}`}>
+    <div
+      className={`btn-row${btn.is_active ? '' : ' btn-row-inactive'}${isAccordionRoot ? ' btn-row-root' : ''}`}
+      style={{ border: 'none', borderRadius: 0, background: 'transparent' }}
+    >
+      {/* Expand/collapse chevron */}
+      {hasChildren ? (
+        <button
+          onClick={onToggleExpand}
+          title={isExpanded ? 'Згорнути' : 'Розгорнути'}
+          style={{
+            width: 22, height: 22, border: 'none', background: 'none', cursor: 'pointer',
+            color: 'var(--text-muted)', fontSize: 11, flexShrink: 0, padding: 0,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'transform .2s',
+            transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)',
+          }}
+        >▶</button>
+      ) : (
+        <span style={{ width: 22, flexShrink: 0 }} />
+      )}
+
       <button
         className={`toggle-pill ${btn.is_active ? 'toggle-on' : 'toggle-off'}`}
         onClick={() => onToggle(btn.id)}
         title={btn.is_active ? 'Активна' : 'Вимкнена'}
       />
-      <span className="btn-label">
+
+      {/* Label — clicking on it also toggles expand if has children */}
+      <span
+        className="btn-label"
+        onClick={hasChildren ? onToggleExpand : undefined}
+        style={{ cursor: hasChildren ? 'pointer' : 'default' }}
+      >
         {btn.emoji && <span style={{ marginRight: 6 }}>{btn.emoji}</span>}
         {btn.label}
+        {hasChildren && !isExpanded && (
+          <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8, fontWeight: 400 }}>
+            {childCount} {childCount === 1 ? 'підкнопка' : childCount < 5 ? 'підкнопки' : 'підкнопок'}
+          </span>
+        )}
         {isChild && level === 3 && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳↳ рівень 3</span>}
-        {isChild && !level && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳ підкнопка</span>}
+        {isChild && !level && !hasChildren && <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 8 }}>↳ підкнопка</span>}
       </span>
+
       <span className={badgeClass}>{badgeLabel}</span>
       <span style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>#{btn.id} · pos {btn.position}</span>
       {onAddChild && (
