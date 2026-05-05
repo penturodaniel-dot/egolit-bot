@@ -581,19 +581,37 @@ class LeadFlow(StatesGroup):
 - **`cmd_start`**: якщо `user_home_parent_id` є → одразу показує підменю міста; інакше → екран вибору міста
 - **`callback_main_menu`**: аналогічно — якщо місто обрано → підменю міста; інакше → вибір міста
 
+#### FSM vs БД — де зберігається місто (важливо!)
+| Що | Де зберігається | Переживає рестарт бота? |
+|----|----------------|------------------------|
+| `user_city` | aiogram FSM state (пам'ять) | ❌ Ні — скидається при перезапуску контейнера |
+| `user_home_parent_id` | aiogram FSM state (пам'ять) | ❌ Ні |
+| `menu_stack` | aiogram FSM state (пам'ять) | ❌ Ні |
+
+> **Поточна поведінка**: якщо контейнер не перезапускався — місто зберігається між сесіями (FSM in-memory). Після рестарту бота юзер знову побачить екран вибору міста.
+
+> **⚠️ Майбутня задача (не реалізовано)**: для стабільного збереження міста між рестартами — додати таблицю `user_preferences (user_id BIGINT PK, city TEXT, home_parent_id INT, updated_at TIMESTAMP)` і завантажувати/зберігати місто при кожному `select_city` + `/start`. Поки що не критично — Дніпро єдине місто і рестарти рідкі.
+
 #### Структура меню — багатомістна архітектура (актуальна)
 Кожне місто — окрема кнопка `select_city` з власними дочірніми підменю:
 ```
 ROOT:
-└── 📍 Дніпро  [select_city, id=11]          ← єдина кнопка на головному екрані
-     ├── Куди піти сьогодні  [submenu, id=1]  ← домашнє підменю міста
-     │    ├── Що у кіно?   [direct_search]    ← city береться з user_city (FSM)
-     │    ├── Що у театрі? [direct_search]
-     │    └── ...
-     ├── Події на вихідні   [submenu]
-     ├── Ідея для побачення [submenu]
-     ├── Куди з дітьми      [submenu]
-     └── Чат з менеджером   [manager]
+└── 📍 Дніпро  [select_city, id=11]             ← єдина активна кнопка на головному екрані
+     ├── Куди сьогодні  [direct_search, id=18]   ← city береться з user_city (FSM)
+     ├── На вихідні     [direct_search, id=19]
+     ├── Ідея для побачення [direct_search, id=3]
+     ├── Куди з дітьми  [direct_search, id=4]
+     ├── Чат з менеджером [manager, id=8]
+     ├── Виконавці      [submenu, id=17]
+     │    ├── Обладнання  [submenu, id=29]  → листя категорій
+     │    ├── Локації     [submenu, id=28]  → листя категорій
+     │    ├── Кондитери   [direct_search, id=33]
+     │    └── ...інші категорії виконавців
+     └── Афіша           [submenu, id=16]  (заплановано)
+          └── ...категорії афіші
+
+⛔ Вимкнені (is_active=FALSE): id=12 (Що у кіно?), id=13 (Що у театрі?),
+   id=14 (Хочу поїсти), id=15 (Кальян) — старі root-кнопки, замінені новою структурою
 
 (майбутнє — Київ, Харків тощо додаються як аналогічні root select_city кнопки)
 ```
@@ -624,8 +642,13 @@ await message.answer(
 
 ### Admin panel — Buttons page (Кнопки)
 - Сторінка `admin-react/src/pages/Buttons.jsx`
-- Дерево кнопок: 3 рівні (корінь → підменю → листя), мітки "↳ підкнопка" / "↳↳ рівень 3"
-- Бейджи кольорові: `direct_search` = фіолетовий, `submenu` = синій, решта = сірий
+- **Акордеон-дерево**: root-кнопки — картки з border-radius; дочірні рядки показуються/ховаються кліком
+  - **▶ стрілка** зліва від назви — повертається на 90° при розкритті
+  - **Клік по назві** теж розкриває/згортає (якщо є діти)
+  - **Лічильник** у згорнутому стані: `"8 підкнопок"` — одразу видно що всередині
+  - При завантаженні — всі root-вузли з дітьми **розкриті за замовчуванням**
+  - Рівні 1→2 і 2→3 обидва підтримують акордеон незалежно
+- Бейджи кольорові: `direct_search` = фіолетовий, `submenu` = синій, `select_city` = зелений, решта = сірий
 - Кнопка `+ суб` на рядку — швидке додавання дочірньої кнопки
 - **📖 Документація** — collapsible панель (завжди на сторінці, згорнута за замовчуванням):
   - Структура меню (3 рівні)
@@ -842,6 +865,8 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 - **Вибір дати з календаря завжди повертав 0 результатів** — `search_crm_events` передавав `specific_date` як рядок `"2026-05-15"` в asyncpg. asyncpg вимагає `datetime.date` об'єкт для колонки `DATE`. Помилка тихо ковталась `except Exception: return []`. Виправлено: `params.append(_date(specific_date))` у `db/events_unified.py`.
 - **"Назад" не повертав у головне меню після вибору міста** — всі пункти меню були дочірніми від єдиної кореневої `select_city` кнопки. Після її приховування головне меню ставало порожнім. Виправлено: впроваджена багатомістна архітектура — кнопки меню залишаються під `select_city`, але Back-навігація використовує `user_home_parent_id` + `sub_menu_keyboard_city_home()` з кнопкою "🗺 Обрати місто".
 - **Back після вибору дати/пошуку вів на вибір міста замість попереднього підменю** — `preserve_clear()` стирала `menu_stack`. Виправлено: `menu_stack` додано до `_PERSISTENT_KEYS` у `bot/fsm_helpers.py`.
+- **`/tmp/dis.py` конфліктував з Python stdlib `dis` модулем** — файл залишився в Docker-контейнері після першої невдалої спроби запустити скрипт міграції. `import asyncio` давав `ImportError: cannot import name 'timeout' from partially initialized module 'asyncio'` (circular import через `/tmp/dis.py`). Виправлено: `docker exec egolist_bot rm -f /tmp/dis.py`, потім скрипт запускався через `docker cp` + `docker exec`.
+- **Старі leaf-кнопки id=12–15 залишались активними** після реструктуризації меню. Вимкнено через asyncpg-скрипт: `UPDATE bot_menu_buttons SET is_active=FALSE WHERE id IN (12,13,14,15)`.
 
 ## ТЗ completion status
 | Feature | Status |
@@ -907,3 +932,6 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 | menu_stack preserved across FSM clears (Back works after date/search) | ✅ |
 | user_home_parent_id persistent key — city home level detection | ✅ |
 | cmd_start + callback_main_menu redirect to city home if city already chosen | ✅ |
+| Accordion tree in Buttons admin page (expand/collapse with chevron + counter) | ✅ |
+| Old redundant buttons id=12–15 disabled (Що у кіно?, Що у театрі?, Хочу поїсти, Кальян) | ✅ |
+| City stored in FSM only (not DB) — resets on container restart (persistent DB TODO) | ⏳ |
