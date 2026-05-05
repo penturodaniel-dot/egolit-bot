@@ -230,7 +230,11 @@ function MessageBubble({ msg, session }) {
               onClick={() => window.open(msg.media_url, '_blank')}
             />
           )}
-          {msg.content && <span>{msg.content}</span>}
+          {msg.content && (
+            senderType === 'bot'
+              ? <span dangerouslySetInnerHTML={{ __html: msg.content }} />
+              : <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
+          )}
         </div>
         <div className="bubble-meta">
           {formatMsgTime(msg.sent_at)}

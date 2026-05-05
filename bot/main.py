@@ -1,10 +1,47 @@
 import asyncio
 import logging
 
+import asyncio as _asyncio
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
+
+
+class LoggingBot(Bot):
+    """Bot subclass that auto-saves every outgoing message to CRM chat history."""
+
+    async def send_message(self, chat_id, text=None, **kwargs):
+        result = await super().send_message(chat_id, text=text, **kwargs)
+        if text and isinstance(chat_id, int):
+            _asyncio.create_task(self._log_out(chat_id, text, "text", None, result.message_id))
+        return result
+
+    async def send_photo(self, chat_id, photo, caption=None, **kwargs):
+        result = await super().send_photo(chat_id, photo, caption=caption, **kwargs)
+        if isinstance(chat_id, int):
+            # Extract URL from URLInputFile or plain string
+            media_url = None
+            if hasattr(photo, 'url'):
+                media_url = photo.url
+            elif isinstance(photo, str) and photo.startswith('http'):
+                media_url = photo
+            _asyncio.create_task(
+                self._log_out(chat_id, caption or '', "photo", media_url, result.message_id)
+            )
+        return result
+
+    @staticmethod
+    async def _log_out(user_id: int, content: str, msg_type: str,
+                       media_url, tg_msg_id: int):
+        try:
+            from db.chat import save_outgoing_message
+            await save_outgoing_message(
+                user_id, content, msg_type=msg_type,
+                media_url=media_url, tg_msg_id=tg_msg_id,
+            )
+        except Exception:
+            pass
 
 from config import settings
 from db.connection import get_pool, close_pool
@@ -27,7 +64,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-bot = Bot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = LoggingBot(token=settings.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 
 # Middleware — persists every incoming message to chat DB

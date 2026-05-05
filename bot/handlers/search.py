@@ -13,7 +13,7 @@ from ai.parse import parse_intent
 from ai.respond import generate_match_reasons
 from ai.rerank import rerank_and_explain, CANDIDATE_FETCH
 from db.queries import search_products, search_karabas_events, search_kino_events, ProductResult, EventResult
-from db.chat import get_session_by_user, save_outgoing_message
+from db.chat import get_session_by_user
 from bot.keyboards import results_keyboard, manager_choice_keyboard
 from bot.calendar_widget import build_calendar, IGN
 from bot.states import SearchFlow
@@ -164,24 +164,12 @@ async def _send_product_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
-            if uid:
-                try:
-                    await save_outgoing_message(
-                        uid, caption,
-                        msg_type="photo", media_url=product.photo_url,
-                    )
-                except Exception:
-                    pass
-            return
+            return  # LoggingBot auto-saves
         except (TelegramBadRequest, Exception):
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
-    if uid:
-        try:
-            await save_outgoing_message(uid, card_text)
-        except Exception:
-            pass
+    # LoggingBot auto-saves via send_message
 
 
 async def _send_event_card(
@@ -195,7 +183,6 @@ async def _send_event_card(
 ):
     """Відправляє картку події — з фото якщо є, інакше текстом."""
     card_text = _build_event_card(event, index, reason)
-    uid = user_id or (message.from_user.id if message.from_user else None)
 
     if event.photo_url:
         try:
@@ -207,24 +194,12 @@ async def _send_event_card(
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
-            if uid:
-                try:
-                    await save_outgoing_message(
-                        uid, caption,
-                        msg_type="photo", media_url=event.photo_url,
-                    )
-                except Exception:
-                    pass
-            return
+            return  # LoggingBot auto-saves
         except (TelegramBadRequest, Exception):
             pass
 
     await message.answer(card_text, parse_mode="HTML", reply_markup=reply_markup)
-    if uid:
-        try:
-            await save_outgoing_message(uid, card_text)
-        except Exception:
-            pass
+    # LoggingBot auto-saves via send_message
 
 
 async def _send_results(
@@ -251,22 +226,13 @@ async def _send_results(
             "Наш менеджер зможе допомогти підібрати варіант особисто 👇"
         )
         await message.answer(not_found_text, reply_markup=manager_choice_keyboard())
-        try:
-            if message.from_user:
-                await save_outgoing_message(message.from_user.id, not_found_text)
-        except Exception:
-            pass
-        return
+        return  # LoggingBot auto-saves
 
     # ── Є результати — вступний AI-текст ──
     if not (ai_text or "").strip():
         ai_text = "Ось що знайшов 👇"
     await message.answer(ai_text, parse_mode="HTML")
-    try:
-        if message.from_user:
-            await save_outgoing_message(message.from_user.id, ai_text)
-    except Exception:
-        pass
+    # LoggingBot auto-saves
 
     # Reasons: use precomputed (from rerank) or generate separately (fallback / "more" pages)
     if precomputed_reasons is not None:
