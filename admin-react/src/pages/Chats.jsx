@@ -201,17 +201,27 @@ function ChatHeader({ session, onToggleInfo, onTakeOver, onReturnToAI, onClose, 
 
 function MessageBubble({ msg, session }) {
   const isOut = msg.direction === 'out';
-  const senderName = isOut
-    ? 'Менеджер'
-    : session?.first_name
-      ? `${session.first_name}${session.last_name ? ' ' + session.last_name : ''}`
-      : session?.username || 'Клієнт';
+  const senderType = msg.sender_type || (isOut ? 'bot' : 'user');
+
+  const senderName = !isOut
+    ? (session?.first_name
+        ? `${session.first_name}${session.last_name ? ' ' + session.last_name : ''}`
+        : session?.username || 'Клієнт')
+    : senderType === 'manager'
+      ? '👤 Менеджер'
+      : '🤖 Бот';
+
+  const bubbleClass = isOut
+    ? senderType === 'manager' ? 'out manager' : 'out'
+    : 'in';
+
+  const rowClass = `msg-row${isOut ? ' out' : ''}${senderType === 'manager' ? ' manager-row' : ''}`;
 
   return (
-    <div className={`msg-row${isOut ? ' out' : ''}`}>
+    <div className={rowClass}>
       <div className="bubble-wrap">
         <div className="bubble-sender">{senderName}</div>
-        <div className={`bubble ${isOut ? 'out' : 'in'}`}>
+        <div className={`bubble ${bubbleClass}`}>
           {msg.media_url && (
             <img
               src={msg.media_url}
@@ -1079,22 +1089,28 @@ export default function Chats() {
           box-shadow: 0 2px 10px rgba(0,0,0,0.07);
         }
         .bubble.out {
-          background: linear-gradient(135deg, #ff6b35 0%, #ff4500 100%);
+          background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
           color: #fff;
           border-radius: var(--radius) var(--radius) 4px var(--radius);
+          box-shadow: 0 4px 14px rgba(99,102,241,0.3);
+        }
+        .bubble.out.manager {
+          background: linear-gradient(135deg, #ff6b35 0%, #ff4500 100%);
           box-shadow: 0 4px 14px rgba(255,107,53,0.3);
         }
         .bubble-meta {
           font-size: 10.5px; color: var(--text-muted);
           margin-top: 5px; display: flex; align-items: center; gap: 4px;
         }
-        .msg-row.out .bubble-meta { justify-content: flex-end; color: rgba(255,107,53,0.7); }
+        .msg-row.out .bubble-meta { justify-content: flex-end; color: rgba(99,102,241,0.6); }
+        .msg-row.out.manager-row .bubble-meta { color: rgba(255,107,53,0.7); }
         .bubble-sender {
           font-size: 11px; font-weight: 600; color: var(--text-muted);
           margin-bottom: 3px; padding: 0 2px;
         }
-        .msg-row.out .bubble-sender { text-align: right; color: rgba(255,107,53,0.55); }
-        .tick-sent { color: rgba(255,107,53,0.5); font-size: 12px; }
+        .msg-row.out .bubble-sender { text-align: right; color: rgba(99,102,241,0.55); }
+        .msg-row.out.manager-row .bubble-sender { color: rgba(255,107,53,0.55); }
+        .tick-sent { color: rgba(99,102,241,0.5); font-size: 12px; }
         .tick-read { color: var(--accent2); font-size: 12px; }
         .icon-btn-danger:hover { background: #fef2f2 !important; border-color: #fecaca !important; color: #dc2626 !important; }
         .bubble-img {

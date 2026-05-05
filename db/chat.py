@@ -40,12 +40,23 @@ async def init_chat_tables() -> None:
             user_id      BIGINT NOT NULL,
             direction    TEXT NOT NULL,   -- in | out
             msg_type     TEXT NOT NULL DEFAULT 'text',  -- text | photo | document | sticker
+            sender_type  TEXT NOT NULL DEFAULT 'bot',   -- bot | manager | user
             content      TEXT,
             media_url    TEXT,
             tg_msg_id    INT,
             is_read      BOOLEAN NOT NULL DEFAULT FALSE,
             sent_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
+    """)
+    # Migration: add sender_type to existing tables
+    await pool.execute("""
+        ALTER TABLE chat_messages
+        ADD COLUMN IF NOT EXISTS sender_type TEXT NOT NULL DEFAULT 'bot'
+    """)
+    # Backfill: incoming messages are always from user
+    await pool.execute("""
+        UPDATE chat_messages SET sender_type = 'user'
+        WHERE direction = 'in' AND sender_type = 'bot'
     """)
     await pool.execute("""
         CREATE INDEX IF NOT EXISTS idx_chat_messages_session
@@ -145,6 +156,7 @@ async def save_message(
     msg_type: str = "text",
     media_url: str | None = None,
     tg_msg_id: int | None = None,
+    sender_type: str | None = None,  # "bot" | "manager" | "user"
 ) -> int:
     """Save a message and update session metadata. Returns message id."""
     pool = await get_pool()
@@ -157,12 +169,16 @@ async def save_message(
         return 0
     session_id = session["id"]
 
+    # Infer sender_type if not provided
+    if sender_type is None:
+        sender_type = "user" if direction == "in" else "bot"
+
     msg_id = await pool.fetchval("""
         INSERT INTO chat_messages
-            (session_id, user_id, direction, msg_type, content, media_url, tg_msg_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+            (session_id, user_id, direction, msg_type, sender_type, content, media_url, tg_msg_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
-    """, session_id, user_id, direction, msg_type, content, media_url, tg_msg_id)
+    """, session_id, user_id, direction, msg_type, sender_type, content, media_url, tg_msg_id)
 
     # Update session last_message + unread
     preview = (content or f"[{msg_type}]")[:80]
@@ -190,7 +206,7 @@ async def save_message(
     return msg_id
 
 
-async def get_messages(session_id: int, limit: int = 50, offset: int = 0) -> list[dict]:
+async def get_messages(session_id: int, limit: int = 500, offset: int = 0) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch("""
         SELECT * FROM chat_messages
@@ -233,6 +249,7 @@ async def save_outgoing_message(
     msg_type: str = "text",
     media_url: str | None = None,
     tg_msg_id: int | None = None,
+    sender_type: str = "bot",  # "bot" | "manager"
 ) -> None:
     """Save an outgoing (bot→user or manager→user) message to chat history."""
     await save_message(
@@ -242,6 +259,7 @@ async def save_outgoing_message(
         msg_type=msg_type,
         media_url=media_url,
         tg_msg_id=tg_msg_id,
+        sender_type=sender_type,
     )
 
 

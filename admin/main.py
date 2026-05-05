@@ -1024,7 +1024,7 @@ async def api_get_messages(request: Request, session_id: int, after_id: int = 0)
     if after_id > 0:
         msgs = await get_messages_after(session_id, after_id)
     else:
-        msgs = await get_messages(session_id, limit=80)
+        msgs = await get_messages(session_id, limit=500)
     return JSONResponse([_msg_to_dict(m) for m in msgs])
 
 
@@ -1069,6 +1069,7 @@ async def api_send_message(request: Request, session_id: int):
         content=text,
         msg_type="text",
         tg_msg_id=tg_msg_id,
+        sender_type="manager",
     )
 
     return JSONResponse({"ok": sent_ok, "tg_msg_id": tg_msg_id})
