@@ -419,6 +419,8 @@ export default function Chats() {
   const pollRef = useRef(null);
   const prevUnreadRef = useRef({});
   const lastSessionIdRef = useRef(null);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [newMsgCount, setNewMsgCount] = useState(0);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -503,24 +505,57 @@ export default function Chats() {
       .finally(() => setLoadingMessages(false));
   }, [activeSession?.id]);
 
-  // Scroll to bottom when messages change
-  // - First batch after session switch: instant jump (no animation)
-  // - New messages in same session: smooth scroll
+  // Helper: jump to bottom instantly (no animation)
+  const jumpToBottom = () => {
+    const container = messagesContainerRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+    setShowScrollBtn(false);
+    setNewMsgCount(0);
+  };
+
+  // Track whether user is near the bottom of the messages list
+  const isNearBottom = () => {
+    const c = messagesContainerRef.current;
+    if (!c) return true;
+    return c.scrollHeight - c.scrollTop - c.clientHeight < 80;
+  };
+
+  // Scroll handler — show/hide the "scroll to bottom" button
+  const handleMessagesScroll = () => {
+    if (isNearBottom()) {
+      setShowScrollBtn(false);
+      setNewMsgCount(0);
+    }
+  };
+
+  // Reset scroll-to-bottom UI when switching sessions
+  useEffect(() => {
+    setShowScrollBtn(false);
+    setNewMsgCount(0);
+  }, [activeSession?.id]);
+
+  // Position scroll on message changes — NO animations anywhere
+  // - First batch after session switch: instant jump
+  // - New messages while at bottom: instant jump (stay pinned)
+  // - New messages while scrolled up: do nothing, show arrow button + counter
   useEffect(() => {
     if (!activeSession || messages.length === 0) return;
     const isFirstLoadForSession = lastSessionIdRef.current !== activeSession.id;
 
     if (isFirstLoadForSession) {
       lastSessionIdRef.current = activeSession.id;
-      // Instant jump — set scrollTop directly so the user never sees the top
-      const container = messagesContainerRef.current;
-      if (container) {
-        container.scrollTop = container.scrollHeight;
-      } else {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
-      }
+      // Use rAF so the DOM has rendered messages before we measure scrollHeight
+      requestAnimationFrame(() => jumpToBottom());
+      return;
+    }
+
+    if (isNearBottom()) {
+      // User is already at bottom — keep them pinned (instant)
+      requestAnimationFrame(() => jumpToBottom());
     } else {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // User scrolled up — don't auto-scroll. Surface a button instead.
+      setShowScrollBtn(true);
+      setNewMsgCount((n) => n + 1);
     }
   }, [messages, activeSession?.id]);
 
@@ -802,7 +837,11 @@ export default function Chats() {
               />
 
               {/* Messages */}
-              <div className="messages-wrap" ref={messagesContainerRef}>
+              <div
+                className="messages-wrap"
+                ref={messagesContainerRef}
+                onScroll={handleMessagesScroll}
+              >
                 {loadingMessages && (
                   <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
                     <div className="spinner" />
@@ -818,6 +857,20 @@ export default function Chats() {
                   )
                 )}
                 <div ref={messagesEndRef} />
+                {showScrollBtn && (
+                  <button
+                    className="scroll-to-bottom-btn"
+                    onClick={jumpToBottom}
+                    title="До останнього повідомлення"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                    {newMsgCount > 0 && (
+                      <span className="scroll-to-bottom-badge">{newMsgCount > 99 ? '99+' : newMsgCount}</span>
+                    )}
+                  </button>
+                )}
               </div>
 
               {/* Input area */}
@@ -1084,6 +1137,34 @@ export default function Chats() {
         .messages-wrap {
           flex: 1; overflow-y: auto; padding: 22px 20px;
           display: flex; flex-direction: column; gap: 14px;
+          scroll-behavior: auto;
+          position: relative;
+        }
+        .scroll-to-bottom-btn {
+          position: sticky;
+          bottom: 12px;
+          align-self: center;
+          margin-top: -44px;
+          width: 40px; height: 40px; border-radius: 50%;
+          background: var(--accent, #ff6b35); color: #fff;
+          border: none; cursor: pointer;
+          display: flex; align-items: center; justify-content: center;
+          box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+          z-index: 10;
+          transition: transform 0.15s, box-shadow 0.15s;
+        }
+        .scroll-to-bottom-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+        .scroll-to-bottom-badge {
+          position: absolute;
+          top: -4px; right: -4px;
+          min-width: 20px; height: 20px; padding: 0 5px;
+          border-radius: 10px; background: #dc2626; color: #fff;
+          font-size: 11px; font-weight: 700;
+          display: flex; align-items: center; justify-content: center;
+          border: 2px solid var(--card-bg, #fff);
         }
         .date-divider { text-align: center; font-size: 11.5px; color: var(--text-muted); margin: 4px 0; font-weight: 500; }
         .msg-row { display: flex; gap: 10px; align-items: flex-end; }
