@@ -414,9 +414,11 @@ export default function Chats() {
 
   // Refs
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const textareaRef = useRef(null);
   const pollRef = useRef(null);
   const prevUnreadRef = useRef({});
+  const lastSessionIdRef = useRef(null);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -502,9 +504,25 @@ export default function Chats() {
   }, [activeSession?.id]);
 
   // Scroll to bottom when messages change
+  // - First batch after session switch: instant jump (no animation)
+  // - New messages in same session: smooth scroll
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    if (!activeSession || messages.length === 0) return;
+    const isFirstLoadForSession = lastSessionIdRef.current !== activeSession.id;
+
+    if (isFirstLoadForSession) {
+      lastSessionIdRef.current = activeSession.id;
+      // Instant jump — set scrollTop directly so the user never sees the top
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+      }
+    } else {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, activeSession?.id]);
 
   // Polling for new messages + sessions
   useEffect(() => {
@@ -784,7 +802,7 @@ export default function Chats() {
               />
 
               {/* Messages */}
-              <div className="messages-wrap">
+              <div className="messages-wrap" ref={messagesContainerRef}>
                 {loadingMessages && (
                   <div style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
                     <div className="spinner" />
