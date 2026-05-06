@@ -92,7 +92,9 @@ def _product_contact_keyboard(
         rows.append([InlineKeyboardButton(text="📷 Instagram", url=f"https://instagram.com/{handle}")])
     elif p.website:
         website = p.website if p.website.startswith("http") else f"https://{p.website}"
-        rows.append([InlineKeyboardButton(text="🌐 Сайт", url=website)])
+        # Skip if website is identical to product_url (avoid duplicate buttons leading to same place)
+        if website.rstrip("/") != (p.product_url or "").rstrip("/"):
+            rows.append([InlineKeyboardButton(text="🌐 Сайт", url=website)])
     if more_markup:
         rows.extend(more_markup.inline_keyboard)
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
@@ -510,10 +512,10 @@ async def handle_free_text(message: Message, bot: Bot, state: FSMContext):
         except Exception:
             pass
     # Free text is disabled — redirect to menu
-    from bot.menu_cache import main_menu_keyboard_for_state
+    from bot.menu_cache import resume_menu_keyboard_for_state
     await message.answer(
         "👇 Оберіть із меню або скористайтесь кнопкою «✍️ Свій запит»:",
-        reply_markup=await main_menu_keyboard_for_state(state),
+        reply_markup=await resume_menu_keyboard_for_state(state),
     )
 
 

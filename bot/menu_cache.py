@@ -87,6 +87,21 @@ async def main_menu_keyboard_for_state(state) -> ReplyKeyboardMarkup:
     return main_menu_keyboard(hide_city=bool(data.get("user_city")))
 
 
+async def resume_menu_keyboard_for_state(state) -> ReplyKeyboardMarkup:
+    """After lead/search/cancel — return user to the right menu level.
+
+    If the user has a city home saved → city home submenu (with '🗺 Обрати місто').
+    Otherwise → root city picker.
+    """
+    data = await state.get_data()
+    home_parent_id = data.get("user_home_parent_id")
+    if home_parent_id:
+        # Reset menu_stack to home level so Back works correctly
+        await state.update_data(menu_stack=[home_parent_id])
+        return sub_menu_keyboard_city_home(home_parent_id)
+    return main_menu_keyboard(hide_city=False)
+
+
 def sub_menu_keyboard(parent_id: int) -> ReplyKeyboardMarkup:
     rows = _buttons_to_rows(_children(parent_id))
     rows.append([KeyboardButton(text=BACK_BUTTON)])

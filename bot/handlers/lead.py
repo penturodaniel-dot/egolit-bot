@@ -1,5 +1,8 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from aiogram.types import (
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    ReplyKeyboardRemove, ReplyKeyboardMarkup, KeyboardButton, Contact,
+)
 from aiogram.fsm.context import FSMContext
 from datetime import date as _date
 
@@ -8,7 +11,9 @@ from bot.calendar_widget import build_calendar, IGN
 import logging
 import httpx
 from bot.keyboards import lead_cancel_keyboard, back_to_menu_keyboard, manager_choice_keyboard
-from bot.menu_cache import main_menu_keyboard, main_menu_keyboard_for_state
+from bot.menu_cache import (
+    main_menu_keyboard, main_menu_keyboard_for_state, resume_menu_keyboard_for_state,
+)
 from bot.states import LeadFlow
 from bot.fsm_helpers import preserve_clear
 from db.connection import get_pool
@@ -28,6 +33,18 @@ LEAD_CATEGORIES = [
     ("❓ Просто питання", "question"),
     ("✏️ Інше", "other"),
 ]
+
+
+def _phone_request_keyboard() -> ReplyKeyboardMarkup:
+    """Reply keyboard with 'Поділитися номером' button (Telegram-native)."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Поділитися номером", request_contact=True)],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=True,
+        input_field_placeholder="Або введи номер вручну...",
+    )
 
 
 def _category_keyboard() -> InlineKeyboardMarkup:
@@ -216,7 +233,7 @@ async def callback_cancel_lead(callback: CallbackQuery, state: FSMContext):
     await preserve_clear(state)
     await callback.message.answer(
         "Скасовано. Чим ще можу допомогти?",
-        reply_markup=await main_menu_keyboard_for_state(state),
+        reply_markup=await resume_menu_keyboard_for_state(state),
     )
     await callback.answer()
 
@@ -227,23 +244,46 @@ async def callback_cancel_lead(callback: CallbackQuery, state: FSMContext):
 async def lead_got_name(message: Message, state: FSMContext):
     await state.update_data(lead_name=message.text.strip())
     await state.set_state(LeadFlow.waiting_phone)
+    # First — show the share-contact reply keyboard
     await message.answer(
         f"Приємно, {message.text.split()[0]}! 👋\n\n"
-        "Вкажи номер телефону або Telegram username для зв'язку:",
-        reply_markup=lead_cancel_keyboard(),
+        "Натисни «📱 Поділитися номером», або введи номер чи Telegram username вручну:",
+        reply_markup=_phone_request_keyboard(),
     )
+    # Second — separate inline keyboard with cancel button (so user can still abort)
+    await message.answer("👇", reply_markup=lead_cancel_keyboard())
 
 
-# ── Step 2: Phone ──────────────────────────────────────────────────────────
-
-@router.message(LeadFlow.waiting_phone)
-async def lead_got_phone(message: Message, state: FSMContext):
-    await state.update_data(lead_phone=message.text.strip())
+async def _accept_phone_and_continue(message: Message, state: FSMContext, phone: str):
+    """Save phone, hide reply keyboard, ask for category."""
+    await state.update_data(lead_phone=phone)
     await state.set_state(LeadFlow.waiting_category)
+    # Hide the share-contact reply keyboard
+    await message.answer("✅ Номер прийнято", reply_markup=ReplyKeyboardRemove())
     await message.answer(
         "Обери категорію звернення:",
         reply_markup=_category_keyboard(),
     )
+
+
+# ── Step 2: Phone (text) ───────────────────────────────────────────────────
+
+@router.message(LeadFlow.waiting_phone, F.contact)
+async def lead_got_phone_contact(message: Message, state: FSMContext):
+    """User pressed the share-contact button — phone arrives in message.contact."""
+    contact: Contact = message.contact
+    phone = (contact.phone_number or "").strip()
+    if phone and not phone.startswith("+"):
+        phone = "+" + phone
+    await _accept_phone_and_continue(message, state, phone or "—")
+
+
+@router.message(LeadFlow.waiting_phone)
+async def lead_got_phone(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text:
+        return
+    await _accept_phone_and_continue(message, state, text)
 
 
 # ── Step 3: Category (inline) ──────────────────────────────────────────────
@@ -420,5 +460,5 @@ async def _submit_lead(message: Message, state: FSMContext):
         "✅ <b>Заявку прийнято!</b>\n\n"
         "Менеджер зв'яжеться з тобою найближчим часом.\n\n"
         "Чим ще можу допомогти?",
-        reply_markup=await main_menu_keyboard_for_state(state),
+        reply_markup=await resume_menu_keyboard_for_state(state),
     )

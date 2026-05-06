@@ -136,7 +136,7 @@ egolist-bot/
 | `admin_settings` | Key-value: notification_chat_id, notification_enabled, manager_online, ai_prompt_extra |
 | `human_sessions` | Legacy: active Telegram-based manager sessions |
 | `chat_sessions` | CRM: one row per user (status: ai/human/closed, tag, unread_count) |
-| `chat_messages` | CRM: full message history (direction: in/out), fields: `content`, `sent_at`, `media_url`, `msg_type` |
+| `chat_messages` | CRM: full message history (direction: in/out), fields: `content`, `sent_at`, `media_url`, `msg_type`, `sender_type` |
 | `quick_replies` | Admin quick-reply scripts for chat |
 
 > **Deprecated/unused for bot search**: `egolist_events`, `egolist_products`, `bot_places`, `bot_events`
@@ -683,10 +683,35 @@ await message.answer(
 - **`progress_callback`**: async callable `(idx, total, cat_name)` — викликається перед кожною категорією, оновлює `_egolist_seed_status` / `_karabas_seed_status` в `admin/main.py`
 - **GET `/api/seed-egolist-status`**: повертає `{running, current, total, current_cat, inserted, updated, done, error}`
 
+### LoggingBot — авто-збереження вихідних повідомлень (важливо!)
+- **`LoggingBot(Bot)`** — aiogram `Bot` subclass у `bot/main.py`, перевизначає `send_message` і `send_photo`
+- Після кожного успішного `super().send_*(...)` створює `asyncio.create_task(_log_out(...))` — fire-and-forget
+- **Покриває 100% вихідних повідомлень**: навігаційні меню, привітання, пошукові картки, помилки, human-mode повідомлення
+- `bot = LoggingBot(...)` замість `bot = Bot(...)` — єдина зміна в ініціалізації
+- **`_log_out(user_id, content, msg_type, media_url, tg_msg_id)`**: lazy-import `save_outgoing_message` → пишемо в `chat_messages` з `direction='out'`, `sender_type='bot'`
+- **`sender_type`** в `chat_messages`: `"bot"` | `"manager"` | `"user"` — звідки надійшло повідомлення
+  - Всі `send_message`/`send_photo` через LoggingBot → `sender_type='bot'`
+  - `POST /api/sessions/{id}/send` у `admin/main.py` → `sender_type='manager'`
+  - Вхідні повідомлення (middleware) → `sender_type='user'`
+- **Явні виклики `save_outgoing_message()` прибрані з `search.py`** — щоб не було дублів
+- Ліміт завантаження: `get_messages(session_id, limit=500)` у `admin/main.py` (збільшено з 80)
+
+### CRM чат — відображення повідомлень (Chats.jsx)
+- **Кольори бульбашок** за `sender_type`:
+  - 🤖 Бот (`sender_type='bot'`, direction='out') → індіго-градієнт (`.bubble.out`)
+  - 👤 Менеджер (`sender_type='manager'`, direction='out') → помаранчевий-градієнт (`.bubble.out.manager`)
+  - Клієнт (direction='in') → білий / світлий (`.bubble.in`)
+- **HTML-рендеринг для бот-повідомлень**: `dangerouslySetInnerHTML={{ __html: msg.content }}` — Telegram HTML-форматування (`<b>`, `<i>`, `<a>` тощо) рендериться правильно
+- Повідомлення менеджера/клієнта: `<span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>` (plain text)
+- Підпис відправника:
+  - direction='out' + `sender_type='manager'` → `"👤 Менеджер"`
+  - direction='out' + `sender_type='bot'` → `"🤖 Бот"`
+  - direction='in' → ім'я клієнта (first_name + ...)
+- **Фото-картки**: `msg_type='photo'` + `media_url` → `<img>` у бульбашці
+
 ### CRM чат — відображення карток (фото)
 - Бот зберігає карти виконавців/подій у `chat_messages` з `msg_type='photo'` і `media_url=<url>`
-- `save_outgoing_message()` у `db/chat.py` приймає `media_url` і `msg_type`
-- `_send_product_card()` і `_send_event_card()` у `bot/handlers/search.py` викликають `save_outgoing_message(..., msg_type="photo", media_url=...)`
+- `LoggingBot.send_photo()` авто-зберігає через `_log_out(...)` з `msg_type='photo'`, `media_url` витягується з `URLInputFile.url` або з рядкового URL
 - `MessageBubble` у `admin-react/src/pages/Chats.jsx` рендерить `<img>` якщо `msg.media_url`:
   ```jsx
   {msg.media_url && (
@@ -784,6 +809,7 @@ await message.answer(
 - Read status: **`is_read`** (BOOLEAN)
 - Media: **`media_url`** (TEXT, nullable) — URL до фото/документу
 - Type: **`msg_type`** — `"text"` / `"photo"` / `"document"` / `"sticker"`
+- Sender: **`sender_type`** — `"bot"` / `"manager"` / `"user"` (хто саме надіслав)
 
 ## AI provider system (pluggable)
 - **File**: `ai/client.py`
@@ -867,6 +893,9 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 - **Back після вибору дати/пошуку вів на вибір міста замість попереднього підменю** — `preserve_clear()` стирала `menu_stack`. Виправлено: `menu_stack` додано до `_PERSISTENT_KEYS` у `bot/fsm_helpers.py`.
 - **`/tmp/dis.py` конфліктував з Python stdlib `dis` модулем** — файл залишився в Docker-контейнері після першої невдалої спроби запустити скрипт міграції. `import asyncio` давав `ImportError: cannot import name 'timeout' from partially initialized module 'asyncio'` (circular import через `/tmp/dis.py`). Виправлено: `docker exec egolist_bot rm -f /tmp/dis.py`, потім скрипт запускався через `docker cp` + `docker exec`.
 - **Старі leaf-кнопки id=12–15 залишались активними** після реструктуризації меню. Вимкнено через asyncpg-скрипт: `UPDATE bot_menu_buttons SET is_active=FALSE WHERE id IN (12,13,14,15)`.
+- **Повідомлення бота не зберігались у chat_messages** — `message.answer()` у `dynamic_menu.py`, `start.py`, `lead.py` та інших хендлерах ніколи не потрапляло в БД. Тільки картки пошуку мали явні виклики `save_outgoing_message()`. Виправлено: `LoggingBot` перевизначає `send_message`/`send_photo` і авто-зберігає всі вихідні повідомлення. Явні виклики з `search.py` видалені (дубль).
+- **Теги HTML показувались як текст у CRM чаті** — повідомлення бота зберігались з `<b>`, `<i>` тощо, але `<span>{msg.content}</span>` рендерив їх як рядок. Виправлено: для `sender_type='bot'` використовується `dangerouslySetInnerHTML={{ __html: msg.content }}`.
+- **В адмін-чаті були видні тільки повідомлення клієнта** — `LIMIT 80` + відсутність збереження вихідних. Виправлено: LoggingBot зберігає всі вихідні + ліміт збільшено до 500.
 
 ## ТЗ completion status
 | Feature | Status |
@@ -935,3 +964,8 @@ cd /opt/egolist-bot && git pull && docker compose up -d --build bot
 | Accordion tree in Buttons admin page (expand/collapse with chevron + counter) | ✅ |
 | Old redundant buttons id=12–15 disabled (Що у кіно?, Що у театрі?, Хочу поїсти, Кальян) | ✅ |
 | City stored in FSM only (not DB) — resets on container restart (persistent DB TODO) | ⏳ |
+| LoggingBot — auto-saves ALL outgoing messages (menus, greetings, cards, errors) | ✅ |
+| sender_type column in chat_messages (bot / manager / user) | ✅ |
+| Color-coded chat bubbles: indigo=bot, orange=manager, white=user | ✅ |
+| HTML rendering for bot messages (dangerouslySetInnerHTML) | ✅ |
+| Full chat history in admin (limit 500, all message types visible) | ✅ |
