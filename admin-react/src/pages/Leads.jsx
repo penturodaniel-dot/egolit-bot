@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getLeads, updateLeadStatus } from '../api.js';
+import { getLeads, updateLeadStatus, deleteLead } from '../api.js';
 import Header from '../components/Header.jsx';
 
 const STATUS_OPTIONS = [
@@ -25,7 +25,7 @@ function formatDate(iso) {
 }
 
 // Inline status+note editor for a lead row
-function LeadRow({ lead, onUpdate }) {
+function LeadRow({ lead, onUpdate, onDelete }) {
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState(lead.status || 'new');
   const [note, setNote] = useState(lead.manager_note || '');
@@ -101,9 +101,22 @@ function LeadRow({ lead, onUpdate }) {
             </button>
           </div>
         ) : (
-          <button className="btn-edit-sm" onClick={() => setEditing(true)} title="Редагувати">
-            ✏️
-          </button>
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'center' }}>
+            <button className="btn-edit-sm" onClick={() => setEditing(true)} title="Редагувати">
+              ✏️
+            </button>
+            <button
+              className="btn-delete-sm"
+              onClick={() => {
+                if (confirm(`Видалити заявку #${lead.id} (${lead.name || '—'})?\nЦе незворотньо.`)) {
+                  onDelete(lead.id);
+                }
+              }}
+              title="Видалити"
+            >
+              🗑
+            </button>
+          </div>
         )}
       </td>
     </tr>
@@ -137,6 +150,15 @@ export default function Leads() {
     setLeads((prev) =>
       prev.map((l) => l.id === id ? { ...l, status, manager_note: note } : l)
     );
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await deleteLead(id);
+      setLeads((prev) => prev.filter((l) => l.id !== id));
+    } catch {
+      alert('Помилка видалення заявки');
+    }
   };
 
   // Stats
@@ -244,7 +266,7 @@ export default function Leads() {
                   </tr>
                 )}
                 {filtered.map((lead) => (
-                  <LeadRow key={lead.id} lead={lead} onUpdate={handleUpdate} />
+                  <LeadRow key={lead.id} lead={lead} onUpdate={handleUpdate} onDelete={handleDelete} />
                 ))}
               </tbody>
             </table>
@@ -334,6 +356,13 @@ export default function Leads() {
           transition: background 0.15s;
         }
         .btn-edit-sm:hover { background: var(--accent-light); }
+        .btn-delete-sm {
+          background: none; border: none; cursor: pointer; font-size: 15px;
+          padding: 4px 8px; border-radius: 6px;
+          transition: background 0.15s;
+          opacity: 0.6;
+        }
+        .btn-delete-sm:hover { background: #fef2f2; opacity: 1; }
         .error-msg {
           padding: 12px 16px; background: #fef2f2;
           border: 1px solid #fecaca; border-radius: var(--radius-sm);

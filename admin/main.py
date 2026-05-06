@@ -960,6 +960,22 @@ async def api_update_lead_status(request: Request, lead_id: int):
     return JSONResponse({"ok": True})
 
 
+@app.delete("/api/leads/{lead_id}")
+async def api_delete_lead(request: Request, lead_id: int):
+    if not request.session.get("authenticated"):
+        return JSONResponse({"error": "not authenticated"}, status_code=401)
+    db = await get_db()
+    result = await db.execute("DELETE FROM bot_leads WHERE id=$1", lead_id)
+    await db.close()
+    # asyncpg returns 'DELETE <count>'
+    deleted = 0
+    try:
+        deleted = int(result.split()[-1])
+    except Exception:
+        pass
+    return JSONResponse({"ok": True, "deleted": deleted})
+
+
 @app.post("/lead/{lead_id}/status")
 async def update_status(
     request: Request,

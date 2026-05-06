@@ -83,6 +83,9 @@ export const getLeads = () =>
 export const updateLeadStatus = (leadId, status, note) =>
   request('POST', `/leads/${leadId}/status`, { status, note });
 
+export const deleteLead = (leadId) =>
+  request('DELETE', `/leads/${leadId}`);
+
 // Content
 export const getPlaces = () =>
   request('GET', '/content/places');
